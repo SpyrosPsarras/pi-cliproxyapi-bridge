@@ -176,11 +176,15 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		// Routes are registered as resources: resource requests are not
 		// management-authenticated, so the plugin can accept an ordinary
 		// CLIProxyAPI API key instead of the CPA Management Key.
+		//
+		// No Menu is declared. A menu entry is opened by the panel with a
+		// plain browser navigation, which cannot carry an Authorization
+		// header, so an API endpoint listed as a menu item would always
+		// render as 401 for a human clicking it.
 		return okEnvelope(managementRegistrationResponse{
 			Resources: []pluginapi.ResourceRoute{
 				{
 					Path:        routeCapabilities,
-					Menu:        "Pi Bridge",
 					Description: "Capability contract consumed by the Pi CLIProxyAPI plugin.",
 				},
 				{
