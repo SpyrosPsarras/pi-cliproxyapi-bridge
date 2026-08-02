@@ -25,22 +25,24 @@ func TestParseConfigDefaults(t *testing.T) {
 }
 
 func TestParseConfigEverydayFields(t *testing.T) {
+	const key = "sk-one-0123456789abcdef"
 	cfg, err := parseConfig([]byte(`
 allow_all_api_keys: false
-allowed_keys:
-  - sk-one-0123456789abcdef
-  - "  "
-  - sk-two-0123456789abcdef
+` + keyFieldName(key) + `: true
+` + keyFieldName("sk-two-0123456789abcdef") + `: false
 show_extra_analytics: true
 `))
 	if err != nil {
 		t.Fatalf("parseConfig: %v", err)
 	}
 	if cfg.allowAll() {
-		t.Fatal("expected the allow-list to be enforced")
+		t.Fatal("expected the selection to be enforced")
 	}
-	if len(cfg.AllowedKeys) != 2 {
-		t.Fatalf("blank entries should be dropped, got %v", cfg.AllowedKeys)
+	if !cfg.keySelected(key) {
+		t.Fatal("expected the ticked key to be selected")
+	}
+	if cfg.keySelected("sk-two-0123456789abcdef") {
+		t.Fatal("an unticked key must not be selected")
 	}
 	if !cfg.ShowExtraAnalytics {
 		t.Fatal("expected extra analytics to be enabled")

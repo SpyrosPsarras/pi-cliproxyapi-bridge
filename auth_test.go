@@ -54,11 +54,16 @@ func TestAuthenticateRejectsMalformedCredentials(t *testing.T) {
 	}
 }
 
+// restrictedConfig turns off the blanket allow and ticks each named key's
+// checkbox, mirroring what the management UI writes.
 func restrictedConfig(allowed ...string) pluginConfig {
 	cfg := defaultConfig()
 	deny := false
 	cfg.AllowAllAPIKeys = &deny
-	cfg.AllowedKeys = allowed
+	cfg.selectedKeys = map[string]bool{}
+	for _, key := range allowed {
+		cfg.selectedKeys[keyFieldName(key)] = true
+	}
 	return cfg
 }
 
@@ -73,40 +78,32 @@ func TestAllowListRestrictsAccess(t *testing.T) {
 	}
 }
 
-// The management UI lists keys in masked form and stores what was picked, so
-// the masked rendering must authorize its key.
-func TestAllowListAcceptsMaskedKey(t *testing.T) {
-	cfg := restrictedConfig(maskKey(testKey))
-	if _, ok := authenticate(cfg, knownKeys, bearer(testKey)); !ok {
-		t.Fatalf("expected the masked key %q to match", maskKey(testKey))
+// Checkbox names must be stable and safe to use as YAML keys, and must never
+// embed usable key material.
+func TestKeyFieldName(t *testing.T) {
+	name := keyFieldName(testKey)
+	if name != keyFieldName(testKey) {
+		t.Fatal("field name must be stable for the same key")
 	}
-	// The mask must still identify exactly one key.
-	if _, ok := authenticate(cfg, knownKeys, bearer("sk-other-key-98765432100000")); ok {
-		t.Fatal("a masked entry must not authorize a different key")
+	if name == keyFieldName("sk-other-key-98765432100000") {
+		t.Fatal("distinct keys must map to distinct fields")
 	}
-}
-
-// Hand-written configs may carry a unique tail rather than the masked form.
-func TestAllowListAcceptsKeyTail(t *testing.T) {
-	cfg := restrictedConfig("0123456789abcdef")
-	if _, ok := authenticate(cfg, knownKeys, bearer(testKey)); !ok {
-		t.Fatal("expected a key tail to match")
+	if strings.Contains(name, testKey) {
+		t.Fatalf("field name %q embeds the raw key", name)
 	}
-}
-
-// A short suffix would authorize unrelated keys, so it must not match.
-func TestAllowListIgnoresShortSuffix(t *testing.T) {
-	cfg := restrictedConfig("def")
-	if _, ok := authenticate(cfg, knownKeys, bearer(testKey)); ok {
-		t.Fatal("expected a too-short suffix to be ignored")
+	for _, r := range name {
+		safe := r == '_' || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9')
+		if !safe {
+			t.Fatalf("field name %q contains %q, which is unsafe as a YAML key", name, r)
+		}
 	}
 }
 
-// An empty list with the checkbox off must deny everyone rather than fall
-// back to allowing all keys.
-func TestEmptyAllowListDeniesEveryone(t *testing.T) {
+// With no checkbox ticked nobody may read quota, rather than falling back to
+// allowing everyone.
+func TestNoTickedKeyDeniesEveryone(t *testing.T) {
 	if _, ok := authenticate(restrictedConfig(), knownKeys, bearer(testKey)); ok {
-		t.Fatal("expected an empty allow-list to refuse access")
+		t.Fatal("expected an empty selection to refuse access")
 	}
 }
 

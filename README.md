@@ -91,15 +91,23 @@ plugins:
       priority: 3
       store:
         version: 0.2.0
-      allow_all_api_keys: true      # off = only allowed_keys may read quota
-      allowed_keys: []              # picked from the plugin's own key list
+      allow_all_api_keys: true      # off = only ticked keys may read quota
       show_extra_analytics: false   # requires CPA Manager Plus
 ```
 
 Callers are authorized against the keys CLIProxyAPI itself accepts, read from
-the management API. The plugin offers those keys as choices in masked form
-(`sk-dac8…8038`), so `allowed_keys` is filled by picking from a list rather than
-pasting key material. No fingerprints, hashes, or full keys are stored here.
+the management API. The plugin declares one checkbox per key, named after its
+masked form, so turning `allow_all_api_keys` off reveals a tickable list:
+
+```yaml
+      allow_all_api_keys: false
+      key_sk_dac8_8038: true
+      key_sk_213d_a9d5: false
+```
+
+The panel renders enum fields as pickers and array fields as raw JSON text, so
+a checkbox per key is what makes this selectable by mouse. Only masked forms are
+stored; no fingerprints, hashes, or usable key material reach the config file.
 
 ### Advanced (optional)
 

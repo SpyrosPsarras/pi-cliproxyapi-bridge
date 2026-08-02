@@ -60,7 +60,7 @@ import (
 
 const (
 	pluginName    = "pi-bridge"
-	pluginVersion = "0.4.0"
+	pluginVersion = "0.5.0"
 
 	routePanel        = "/panel"
 	routeCapabilities = "/dev/capabilities"
@@ -241,11 +241,14 @@ func applyLifecycleConfig(request []byte) {
 	capCache = newTTLCache()
 }
 
-// knownKeyChoices lists the API keys CLIProxyAPI accepts, masked, so the
-// management UI can offer them as choices instead of asking an operator to
-// paste key material. Registration is synchronous, so this is best effort: an
-// unreachable management API yields no choices rather than a failed load.
-func knownKeyChoices(cfg pluginConfig) []string {
+// keyCheckboxFields declares one checkbox per API key the proxy accepts, so the
+// management UI renders a tickable list instead of a free-text field. The panel
+// only turns enum fields into pickers and treats array fields as raw JSON, so
+// booleans are the one control that gives a real choice.
+//
+// Registration is synchronous, so this is best effort: an unreachable
+// management API yields no checkboxes rather than a failed plugin load.
+func keyCheckboxFields(cfg pluginConfig) []pluginapi.ConfigField {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -253,17 +256,38 @@ func knownKeyChoices(cfg pluginConfig) []string {
 	if err != nil {
 		return nil
 	}
-	choices := make([]string, 0, len(keys))
+
+	fields := make([]pluginapi.ConfigField, 0, len(keys))
+	seen := map[string]bool{}
 	for _, key := range keys {
-		if key = strings.TrimSpace(key); key != "" {
-			choices = append(choices, maskKey(key))
+		if key = strings.TrimSpace(key); key == "" {
+			continue
 		}
+		name := keyFieldName(key)
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		fields = append(fields, pluginapi.ConfigField{
+			Name:        name,
+			Type:        pluginapi.ConfigFieldTypeBoolean,
+			Description: "Let " + maskKey(key) + " read provider quota.",
+		})
 	}
-	return choices
+	return fields
 }
 
 func pluginRegistration() registration {
 	cfg, _ := currentConfig()
+
+	fields := []pluginapi.ConfigField{
+		{Name: "allow_all_api_keys", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Let every CLIProxyAPI API key read provider quota. Turn off to pick individual keys below. Default: on."},
+	}
+	fields = append(fields, keyCheckboxFields(cfg)...)
+	fields = append(fields,
+		pluginapi.ConfigField{Name: "show_extra_analytics", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Expose extra analytics when CPA Manager Plus is installed."},
+		pluginapi.ConfigField{Name: "advanced", Type: pluginapi.ConfigFieldTypeString, Description: `Optional JSON overriding defaults that rarely change, for example {"usage_ttl_seconds":60}. Leave empty unless a URL, secret source, or cache TTL must differ.`},
+	)
 
 	return registration{
 		SchemaVersion: pluginabi.SchemaVersion,
@@ -272,17 +296,7 @@ func pluginRegistration() registration {
 			Version:          pluginVersion,
 			Author:           "self-hosted",
 			GitHubRepository: "https://github.com/abix5/pi-cliproxyapi",
-			ConfigFields: []pluginapi.ConfigField{
-				{Name: "allow_all_api_keys", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Let every CLIProxyAPI API key read provider quota. Turn off to restrict access to the keys listed below. Default: on."},
-				{
-					Name:        "allowed_keys",
-					Type:        pluginapi.ConfigFieldTypeArray,
-					EnumValues:  knownKeyChoices(cfg),
-					Description: "Keys allowed to read quota when the checkbox above is off. Pick from the listed keys; a full key also works.",
-				},
-				{Name: "show_extra_analytics", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Expose extra analytics when CPA Manager Plus is installed."},
-				{Name: "advanced", Type: pluginapi.ConfigFieldTypeString, Description: `Optional JSON overriding defaults that rarely change, for example {"usage_ttl_seconds":60}. Leave empty unless a URL, secret source, or cache TTL must differ.`},
-			},
+			ConfigFields:     fields,
 		},
 		Capabilities: registrationCapabilities{ManagementAPI: true},
 	}

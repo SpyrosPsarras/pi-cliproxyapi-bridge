@@ -11,20 +11,22 @@ import (
 
 // pluginConfig mirrors plugins.configs.pi-bridge.
 //
-// The everyday fields are a checkbox and a list of keys; everything that is
-// deployment-specific and rarely touched lives in the advanced JSON blob so the
-// management UI stays a two-decision form.
+// The everyday settings are checkboxes; everything deployment-specific and
+// rarely touched lives in the advanced JSON blob, so the management UI stays a
+// short form of toggles.
 type pluginConfig struct {
 	// AllowAllAPIKeys grants quota to every CLIProxyAPI key. Turning it off
-	// restricts access to AllowedKeys.
+	// restricts access to the keys whose own checkbox is ticked.
 	AllowAllAPIKeys *bool `yaml:"allow_all_api_keys"`
-	// AllowedKeys lists API keys allowed to read quota when
-	// AllowAllAPIKeys is false. Full keys or a unique tail both work.
-	AllowedKeys []string `yaml:"allowed_keys"`
 	// ShowExtraAnalytics exposes CPA Manager Plus analytics when available.
 	ShowExtraAnalytics bool `yaml:"show_extra_analytics"`
 	// Advanced holds rarely-changed deployment settings as JSON.
 	Advanced string `yaml:"advanced"`
+
+	// selectedKeys holds the per-key checkboxes, keyed by generated field name.
+	// The plugin declares one boolean field per proxy API key so operators tick
+	// keys in the panel instead of typing them.
+	selectedKeys map[string]bool `yaml:"-"`
 
 	advanced advancedConfig `yaml:"-"`
 }
@@ -64,8 +66,12 @@ func defaultConfig() pluginConfig {
 // plugin.register.
 func parseConfig(raw []byte) (pluginConfig, error) {
 	cfg := pluginConfig{}
+	block := map[string]any{}
 	if len(strings.TrimSpace(string(raw))) > 0 {
 		if err := yaml.Unmarshal(raw, &cfg); err != nil {
+			return pluginConfig{}, fmt.Errorf("decode plugin config: %w", err)
+		}
+		if err := yaml.Unmarshal(raw, &block); err != nil {
 			return pluginConfig{}, fmt.Errorf("decode plugin config: %w", err)
 		}
 	}
@@ -74,6 +80,18 @@ func parseConfig(raw []byte) (pluginConfig, error) {
 	if cfg.AllowAllAPIKeys == nil {
 		allowAll := true
 		cfg.AllowAllAPIKeys = &allowAll
+	}
+
+	// Per-key checkboxes carry generated names, so they are read from the raw
+	// block rather than from declared struct fields.
+	cfg.selectedKeys = map[string]bool{}
+	for name, value := range block {
+		if !strings.HasPrefix(name, keyFieldPrefix) {
+			continue
+		}
+		if enabled, ok := value.(bool); ok {
+			cfg.selectedKeys[name] = enabled
+		}
 	}
 
 	adv := defaultAdvanced()
@@ -99,20 +117,37 @@ func parseConfig(raw []byte) (pluginConfig, error) {
 	adv.ManagementURL = strings.TrimRight(strings.TrimSpace(adv.ManagementURL), "/")
 	adv.CPAMURL = strings.TrimRight(strings.TrimSpace(adv.CPAMURL), "/")
 
-	cleaned := make([]string, 0, len(cfg.AllowedKeys))
-	for _, key := range cfg.AllowedKeys {
-		if key = strings.TrimSpace(key); key != "" {
-			cleaned = append(cleaned, key)
-		}
-	}
-
-	cfg.AllowedKeys = cleaned
 	cfg.advanced = adv
 	return cfg, nil
 }
 
 func (c pluginConfig) allowAll() bool {
 	return c.AllowAllAPIKeys == nil || *c.AllowAllAPIKeys
+}
+
+// keyFieldPrefix marks the generated per-key checkbox fields.
+const keyFieldPrefix = "key_"
+
+// keyFieldName derives a stable, YAML-safe field name from an API key. It
+// embeds only the masked form, so the config file never carries usable key
+// material, and the same key always maps to the same checkbox.
+func keyFieldName(apiKey string) string {
+	var b strings.Builder
+	b.WriteString(keyFieldPrefix)
+	for _, r := range maskKey(apiKey) {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
+}
+
+// keySelected reports whether the operator ticked this key's checkbox.
+func (c pluginConfig) keySelected(apiKey string) bool {
+	return c.selectedKeys[keyFieldName(apiKey)]
 }
 
 // readSecret resolves a secret from a file first, then an environment
