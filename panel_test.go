@@ -54,8 +54,8 @@ func TestPanelServedWithoutAuthorization(t *testing.T) {
 	}
 }
 
-// The route is publicly reachable, so the page itself must never embed
-// credentials or account data.
+// The page is publicly reachable, so it must carry no credentials, no account
+// data, and no interactive key entry.
 func TestPanelBodyCarriesNoSecrets(t *testing.T) {
 	resp := handleRequest(t, pluginapi.ManagementRequest{
 		Method: http.MethodGet,
@@ -63,13 +63,12 @@ func TestPanelBodyCarriesNoSecrets(t *testing.T) {
 	})
 
 	body := string(resp.Body)
-	// A realistic key, not the input placeholder, is what must never appear.
 	if regexp.MustCompile(`sk-[A-Za-z0-9]{12,}`).MatchString(body) {
 		t.Fatal("panel body embeds something shaped like an API key")
 	}
-	for _, forbidden := range []string{"MANAGEMENT_PASSWORD", "@gmail", "@icloud", "authIndex"} {
+	for _, forbidden := range []string{"MANAGEMENT_PASSWORD", "@gmail", "@icloud", "authIndex", "<script"} {
 		if strings.Contains(body, forbidden) {
-			t.Fatalf("panel body leaks %q", forbidden)
+			t.Fatalf("panel body contains %q", forbidden)
 		}
 	}
 	if resp.Headers.Get("Content-Security-Policy") == "" {
@@ -77,14 +76,34 @@ func TestPanelBodyCarriesNoSecrets(t *testing.T) {
 	}
 }
 
-// Data endpoints must stay behind the allow-list even though the panel is open.
-func TestUsageStillRequiresAuthorization(t *testing.T) {
+// The page exists to explain setup, so the essential instructions must be there.
+func TestPanelExplainsSetup(t *testing.T) {
+	resp := handleRequest(t, pluginapi.ManagementRequest{
+		Method: http.MethodGet,
+		Path:   "/v0/resource/plugins/pi-bridge" + routePanel,
+	})
+
+	body := string(resp.Body)
+	for _, expected := range []string{"pi install npm:pi-cliproxyapi", routeUsage, "allow_all_api_keys"} {
+		if !strings.Contains(body, expected) {
+			t.Fatalf("panel should document %q", expected)
+		}
+	}
+}
+
+// Data endpoints must never be served without verifying the caller. In this
+// test no management key is configured, so the plugin cannot check the key and
+// must fail closed rather than fall back to serving quota.
+func TestUsageIsRefusedWhenCredentialsCannotBeVerified(t *testing.T) {
 	resp := handleRequest(t, pluginapi.ManagementRequest{
 		Method: http.MethodGet,
 		Path:   "/v0/resource/plugins/pi-bridge" + routeUsage,
 	})
 
-	if resp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("usage status = %d, want 401", resp.StatusCode)
+	if resp.StatusCode == http.StatusOK {
+		t.Fatal("usage must not be served when the caller cannot be verified")
+	}
+	if resp.StatusCode != http.StatusServiceUnavailable && resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("usage status = %d, want 401 or 503", resp.StatusCode)
 	}
 }

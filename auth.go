@@ -1,9 +1,7 @@
 package main
 
 import (
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
 	"net/http"
 	"strings"
 )
@@ -13,26 +11,69 @@ const (
 	permissionAnalytics = "analytics"
 )
 
-// authenticate resolves an ordinary CLIProxyAPI API key presented as a Bearer
-// token to a configured client entry.
-//
-// Every rejection path returns the same result so a caller cannot learn
-// whether a fingerprint exists, only that access was refused.
-func authenticate(cfg pluginConfig, headers http.Header) (clientKey, string, bool) {
-	token := bearerToken(headers)
-	if token == "" {
-		return clientKey{}, "", false
-	}
+// authenticatedClient identifies the caller behind an accepted API key.
+type authenticatedClient struct {
+	KeyHint     string
+	Permissions []string
+}
 
-	sum := sha256.Sum256([]byte(token))
-	got := hex.EncodeToString(sum[:])
-
-	for _, candidate := range cfg.clients {
-		if subtle.ConstantTimeCompare([]byte(got), []byte(candidate.Fingerprint)) == 1 {
-			return candidate, maskKey(token), true
+func (c authenticatedClient) allows(permission string) bool {
+	for _, p := range c.Permissions {
+		if strings.EqualFold(p, permission) {
+			return true
 		}
 	}
-	return clientKey{}, "", false
+	return false
+}
+
+// authenticate accepts an ordinary CLIProxyAPI API key presented as a Bearer
+// token. The key is checked against the keys CLIProxyAPI itself accepts, so
+// operators never copy fingerprints into this plugin's configuration.
+//
+// Every rejection path returns the same result, so a caller cannot learn
+// whether a key exists, only that access was refused.
+func authenticate(cfg pluginConfig, knownKeys []string, headers http.Header) (authenticatedClient, bool) {
+	token := bearerToken(headers)
+	if token == "" {
+		return authenticatedClient{}, false
+	}
+
+	// The key must be a real CLIProxyAPI key regardless of the allow-list, so
+	// an arbitrary string can never pass by matching a permissive suffix.
+	if !matchesAny(token, knownKeys, true) {
+		return authenticatedClient{}, false
+	}
+	if !cfg.allowAll() && !matchesAny(token, cfg.AllowedKeys, false) {
+		return authenticatedClient{}, false
+	}
+
+	permissions := []string{permissionUsage}
+	if cfg.ShowExtraAnalytics {
+		permissions = append(permissions, permissionAnalytics)
+	}
+	return authenticatedClient{KeyHint: maskKey(token), Permissions: permissions}, true
+}
+
+// matchesAny reports whether token matches an entry. Operators may paste a
+// full key or the unique tail shown in the UI, so a suffix match is accepted
+// for allow-list entries; identity checks require the whole key.
+func matchesAny(token string, entries []string, exactOnly bool) bool {
+	matched := false
+	for _, entry := range entries {
+		entry = strings.TrimSpace(entry)
+		if entry == "" {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(token), []byte(entry)) == 1 {
+			matched = true
+			continue
+		}
+		// A short suffix would authorize far too many keys.
+		if !exactOnly && len(entry) >= 8 && len(entry) < len(token) && strings.HasSuffix(token, entry) {
+			matched = true
+		}
+	}
+	return matched
 }
 
 // bearerToken extracts a single Bearer credential. Any other authorization

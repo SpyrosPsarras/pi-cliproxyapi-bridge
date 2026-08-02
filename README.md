@@ -35,6 +35,27 @@ Plus the unauthenticated management UI page:
 GET /v0/resource/plugins/pi-bridge/panel
 ```
 
+## Response contract
+
+The response shape is negotiated with a request header, so the plugin can
+replace the sidecar without touching the client first.
+
+| Request | Response |
+| --- | --- |
+| no header | contract v1 |
+| `X-Pi-Contract: 1` | contract v1 |
+| `X-Pi-Contract: 2` | contract v2 |
+| `X-Pi-Contract: 99` | contract v2 (newest available) |
+
+**v1** is the `/api/usage` document the sidecar serves, field for field, so an
+unmigrated client sees no change.
+
+**v2** adds a `cache` section (`updatedAt`, `stale`, `ttlMs`) and a `client`
+section (`keyHint`).
+
+Every response echoes `X-Pi-Contract` and `X-Pi-Contract-Latest`, so a client
+can detect that a newer contract exists and warn without parsing the body.
+
 `/dev/usage` returns the same `schemaVersion: 1` document shape the Pi plugin
 already renders, so the client contract does not change:
 
@@ -58,8 +79,9 @@ already renders, so the client contract does not change:
 
 ## Configuration
 
-Under `plugins.configs.pi-bridge` in the CLIProxyAPI `config.yaml`. Every field is
-a flat scalar or a list, so the management UI renders real inputs:
+The plugin works with no configuration: enable it and every CLIProxyAPI API key
+can read quota. The management UI shows two everyday settings plus an optional
+JSON field for deployment details that rarely change.
 
 ```yaml
 plugins:
@@ -68,35 +90,37 @@ plugins:
       enabled: true
       priority: 3
       store:
-        version: 0.1.2
-      client_keys:
-        - abix:<64-hex sha256 of the API key>
-        - team:<64-hex>:usage+analytics
-      management_url: http://127.0.0.1:8317/v0/management
-      management_key_env: MANAGEMENT_PASSWORD
-      cpam_enabled: auto
-      cpam_url: http://cpa-manager-plus:18317
-      cpam_admin_key_file: /run/secrets/cpam_admin_key
-      usage_ttl_seconds: 60
-      capabilities_ttl_seconds: 300
+        version: 0.2.0
+      allow_all_api_keys: true      # off = only allowed_keys may read quota
+      allowed_keys: []              # full key or its unique tail
+      show_extra_analytics: false   # requires CPA Manager Plus
 ```
 
-`client_keys` entries are `alias:fingerprint[:permissions]`. The alias is a safe
-label shown in responses, the fingerprint is the SHA-256 of the API key (an
-optional `sha256:` prefix is accepted), and permissions are `+`-separated,
-defaulting to `usage`.
+Callers are authorized against the keys CLIProxyAPI itself accepts, read from
+the management API. No fingerprints, hashes, or key material are stored here.
 
-Generate a fingerprint without printing the key:
+### Advanced (optional)
 
-```bash
-printf '%s' "$API_KEY" | shasum -a 256 | awk '{print $1}'
+Leave `advanced` empty unless a URL, secret source, or cache TTL must differ:
+
+```yaml
+      advanced: '{"usage_ttl_seconds": 30}'
 ```
+
+| Key | Default |
+| --- | --- |
+| `management_url` | `http://127.0.0.1:8317/v0/management` |
+| `management_key_env` | `MANAGEMENT_PASSWORD` |
+| `management_key_file` | unset (takes precedence over the env var) |
+| `cpam_url` | `http://cpa-manager-plus:18317` |
+| `cpam_admin_key_env` / `cpam_admin_key_file` | unset |
+| `usage_ttl_seconds` | `60` |
+| `capabilities_ttl_seconds` | `300` |
 
 ### Management UI
 
-The plugin adds a **Pi Bridge** menu entry serving a static page that documents
-the endpoints and can display quota. The page holds no credentials: a key typed
-there stays in the browser tab and is sent directly to the usage endpoint.
+The plugin adds a **Pi Bridge** menu entry serving a static page that explains
+how to configure the plugin and connect the Pi extension.
 
 Only this HTML page declares a menu. The JSON endpoints deliberately do not: the
 UI opens menu entries with `window.open`, a plain navigation that cannot carry an

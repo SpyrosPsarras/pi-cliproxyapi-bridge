@@ -48,6 +48,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -59,11 +60,21 @@ import (
 
 const (
 	pluginName    = "pi-bridge"
-	pluginVersion = "0.1.2"
+	pluginVersion = "0.3.2"
 
 	routePanel        = "/panel"
 	routeCapabilities = "/dev/capabilities"
 	routeUsage        = "/dev/usage"
+
+	// contractHeader selects the response contract. Absent means v1, which is
+	// byte-compatible with the sidecar so an unmigrated client keeps working.
+	contractHeader = "X-Pi-Contract"
+	contractV1     = 1
+	contractLatest = 2
+
+	// documentationURL is surfaced to clients still on v1 so the warning they
+	// show can point at the upgrade instructions.
+	documentationURL = "https://github.com/abix5/pi-cliproxyapi#pi-bridge"
 
 	refreshInterval = 30 * time.Second
 )
@@ -239,16 +250,10 @@ func pluginRegistration() registration {
 			Author:           "self-hosted",
 			GitHubRepository: "https://github.com/abix5/pi-cliproxyapi",
 			ConfigFields: []pluginapi.ConfigField{
-				{Name: "client_keys", Type: pluginapi.ConfigFieldTypeArray, Description: "Authorized Pi clients as alias:fingerprint[:usage+analytics]. Fingerprint is the SHA-256 of the API key, never the key itself."},
-				{Name: "management_url", Type: pluginapi.ConfigFieldTypeString, Description: "CPA Management API base URL. Defaults to http://127.0.0.1:8317/v0/management."},
-				{Name: "management_key_env", Type: pluginapi.ConfigFieldTypeString, Description: "Environment variable holding the CPA Management Key. Defaults to MANAGEMENT_PASSWORD."},
-				{Name: "management_key_file", Type: pluginapi.ConfigFieldTypeString, Description: "File holding the CPA Management Key. Takes precedence over the environment variable."},
-				{Name: "cpam_enabled", Type: pluginapi.ConfigFieldTypeEnum, EnumValues: []string{"auto", "on", "off"}, Description: "Whether to detect CPA Manager Plus. auto probes only when cpam_url is set."},
-				{Name: "cpam_url", Type: pluginapi.ConfigFieldTypeString, Description: "CPA Manager Plus base URL, for example http://cpa-manager-plus:18317."},
-				{Name: "cpam_admin_key_env", Type: pluginapi.ConfigFieldTypeString, Description: "Environment variable holding the CPAM admin key."},
-				{Name: "cpam_admin_key_file", Type: pluginapi.ConfigFieldTypeString, Description: "File holding the CPAM admin key. Takes precedence over the environment variable."},
-				{Name: "usage_ttl_seconds", Type: pluginapi.ConfigFieldTypeInteger, Description: "How long cached quota is served before refetching upstream. Defaults to 60."},
-				{Name: "capabilities_ttl_seconds", Type: pluginapi.ConfigFieldTypeInteger, Description: "How long cached capability detection is reused. Defaults to 300."},
+				{Name: "allow_all_api_keys", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Let every CLIProxyAPI API key read provider quota. Turn off to restrict access to the keys listed below. Default: on."},
+				{Name: "allowed_keys", Type: pluginapi.ConfigFieldTypeArray, Description: "API keys allowed to read quota when the checkbox above is off. Paste a full key or its unique tail."},
+				{Name: "show_extra_analytics", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Expose extra analytics when CPA Manager Plus is installed."},
+				{Name: "advanced", Type: pluginapi.ConfigFieldTypeString, Description: `Optional JSON overriding defaults that rarely change, for example {"usage_ttl_seconds":60}. Leave empty unless a URL, secret source, or cache TTL must differ.`},
 			},
 		},
 		Capabilities: registrationCapabilities{ManagementAPI: true},
@@ -276,29 +281,59 @@ func handleResourceRequest(raw []byte) ([]byte, error) {
 		return okEnvelope(jsonResponse(http.StatusServiceUnavailable, map[string]string{"error": "plugin configuration is invalid"}))
 	}
 
-	client, hint, ok := authenticate(cfg, req.Headers)
+	// Authorization is checked against the keys CLIProxyAPI itself accepts.
+	// If that list cannot be read the plugin fails closed rather than serving
+	// quota to an unverified caller.
+	authCtx, cancelAuth := context.WithTimeout(context.Background(), 15*time.Second)
+	knownKeys, keysErr := cfg.fetchAPIKeys(authCtx)
+	cancelAuth()
+	if keysErr != nil {
+		return okEnvelope(jsonResponse(http.StatusServiceUnavailable, map[string]string{"error": "cannot verify credentials"}))
+	}
+
+	client, ok := authenticate(cfg, knownKeys, req.Headers)
 	if !ok {
 		return okEnvelope(jsonResponse(http.StatusUnauthorized, map[string]string{"error": "unauthorized"}))
 	}
 
 	switch {
 	case strings.HasSuffix(req.Path, routeCapabilities):
-		return handleCapabilities(cfg, client, hint)
+		return handleCapabilities(cfg, client, contractFrom(req.Headers))
 	case strings.HasSuffix(req.Path, routeUsage):
-		return handleUsage(cfg, client, hint, req.Query)
+		return handleUsage(cfg, client, req.Query, contractFrom(req.Headers))
 	default:
 		return okEnvelope(jsonResponse(http.StatusNotFound, map[string]string{"error": "not found"}))
 	}
 }
 
+// contractFrom resolves the requested response contract. Anything absent,
+// malformed, or older resolves to v1, so a client that knows nothing about
+// contracts receives exactly what the sidecar served.
+func contractFrom(headers http.Header) int {
+	if headers == nil {
+		return contractV1
+	}
+	requested, err := strconv.Atoi(strings.TrimSpace(headers.Get(contractHeader)))
+	if err != nil || requested < contractV1 {
+		return contractV1
+	}
+	if requested > contractLatest {
+		return contractLatest
+	}
+	return requested
+}
+
 type capabilitiesDocument struct {
-	SchemaVersion int            `json:"schemaVersion"`
-	Plugin        string         `json:"plugin"`
-	Version       string         `json:"version"`
-	Client        clientIdentity `json:"client"`
-	Permissions   []string       `json:"permissions"`
-	Upstream      upstreamInfo   `json:"upstream"`
-	Endpoints     endpointInfo   `json:"endpoints"`
+	SchemaVersion    int            `json:"schemaVersion"`
+	Plugin           string         `json:"plugin"`
+	Version          string         `json:"version"`
+	Contract         int            `json:"contract"`
+	LatestContract   int            `json:"latestContract"`
+	Client           clientIdentity `json:"client"`
+	Permissions      []string       `json:"permissions"`
+	Upstream         upstreamInfo   `json:"upstream"`
+	Endpoints        endpointInfo   `json:"endpoints"`
+	DocumentationURL string         `json:"documentationUrl"`
 }
 
 type upstreamInfo struct {
@@ -311,18 +346,21 @@ type endpointInfo struct {
 	Usage string `json:"usage"`
 }
 
-func handleCapabilities(cfg pluginConfig, client clientKey, hint string) ([]byte, error) {
+func handleCapabilities(cfg pluginConfig, client authenticatedClient, contract int) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 
 	doc := capabilitiesDocument{
-		SchemaVersion: 1,
-		Plugin:        pluginName,
-		Version:       pluginVersion,
-		Client:        clientIdentity{ID: client.ID, KeyHint: hint},
-		Permissions:   client.Permissions,
-		Upstream:      upstreamInfo{Panel: "native"},
-		Endpoints:     endpointInfo{Usage: routeUsage},
+		SchemaVersion:    1,
+		Plugin:           pluginName,
+		Version:          pluginVersion,
+		Contract:         contract,
+		LatestContract:   contractLatest,
+		Client:           clientIdentity{KeyHint: client.KeyHint},
+		Permissions:      client.Permissions,
+		Upstream:         upstreamInfo{Panel: "native"},
+		Endpoints:        endpointInfo{Usage: routeUsage},
+		DocumentationURL: documentationURL,
 	}
 
 	if version, err := cfg.cpaVersion(ctx); err == nil {
@@ -336,30 +374,34 @@ func handleCapabilities(cfg pluginConfig, client clientKey, hint string) ([]byte
 	return okEnvelope(jsonResponse(http.StatusOK, doc))
 }
 
-func handleUsage(cfg pluginConfig, client clientKey, hint string, query url.Values) ([]byte, error) {
+func handleUsage(cfg pluginConfig, client authenticatedClient, query url.Values, contract int) ([]byte, error) {
 	if !client.allows(permissionUsage) {
 		return okEnvelope(jsonResponse(http.StatusForbidden, map[string]string{"error": "usage is not enabled for this key"}))
 	}
 
-	cacheKey := "usage:" + client.ID
-	ttl := time.Duration(cfg.UsageTTLSeconds) * time.Second
+	// The upstream document is identical for every authorized caller, so one
+	// cache entry serves all of them and upstream is polled once per TTL.
+	// Contract shaping happens after the cache read.
+	const cacheKey = "usage"
+	ttl := time.Duration(cfg.advanced.UsageTTLSeconds) * time.Second
 
 	if isTruthy(query.Get("refresh")) {
 		// Refresh is rate limited per client so a Pi UI cannot be used to
 		// hammer the upstream provider quota endpoints.
-		if refreshers.allow(cacheKey, refreshInterval) {
+		if refreshers.allow(client.KeyHint, refreshInterval) {
 			usageCache.invalidate(cacheKey)
 		}
 	}
 
 	if cached, storedAt, ok := usageCache.get(cacheKey); ok {
-		return okEnvelope(rawJSONResponse(http.StatusOK, withCacheInfo(cached, storedAt, ttl, false)))
+		return okEnvelope(rawJSONResponse(http.StatusOK,
+			shapeForContract(cached, contract, client, storedAt, ttl), contract))
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	doc, err := buildUsage(ctx, cfg, client, hint)
+	doc, err := buildUsage(ctx, cfg)
 	if err != nil {
 		return okEnvelope(jsonResponse(http.StatusBadGateway, map[string]string{"error": "upstream usage is unavailable"}))
 	}
@@ -369,20 +411,29 @@ func handleUsage(cfg pluginConfig, client clientKey, hint string, query url.Valu
 		return nil, err
 	}
 	storedAt := usageCache.put(cacheKey, encoded, ttl)
-	return okEnvelope(rawJSONResponse(http.StatusOK, withCacheInfo(encoded, storedAt, ttl, false)))
+	return okEnvelope(rawJSONResponse(http.StatusOK,
+		shapeForContract(encoded, contract, client, storedAt, ttl), contract))
 }
 
-// withCacheInfo stamps cache provenance onto an already-encoded document.
-func withCacheInfo(encoded []byte, storedAt time.Time, ttl time.Duration, stale bool) []byte {
-	var doc map[string]any
+// shapeForContract renders the cached upstream document for one contract
+// version. v1 is the sidecar's shape exactly; v2 adds cache provenance and the
+// authenticated client hint.
+func shapeForContract(encoded []byte, contract int, client authenticatedClient, storedAt time.Time, ttl time.Duration) []byte {
+	if contract < contractLatest {
+		return encoded
+	}
+
+	var doc usageDocument
 	if err := json.Unmarshal(encoded, &doc); err != nil {
 		return encoded
 	}
-	doc["cache"] = cacheInfo{
+	doc.Client = &clientIdentity{KeyHint: client.KeyHint}
+	doc.Cache = &cacheInfo{
 		UpdatedAt: storedAt.UTC().Format(time.RFC3339),
-		Stale:     stale,
+		Stale:     false,
 		TTLMs:     int(ttl.Milliseconds()),
 	}
+
 	patched, err := json.Marshal(doc)
 	if err != nil {
 		return encoded
@@ -390,6 +441,7 @@ func withCacheInfo(encoded []byte, storedAt time.Time, ttl time.Duration, stale 
 	return patched
 }
 
+// withCacheInfo stamps cache provenance onto an already-encoded document.
 func isTruthy(value string) bool {
 	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "1", "true", "yes":
@@ -407,15 +459,19 @@ func jsonResponse(status int, payload any) pluginapi.ManagementResponse {
 		body = []byte(`{"error":"internal error"}`)
 		status = http.StatusInternalServerError
 	}
-	return rawJSONResponse(status, body)
+	return rawJSONResponse(status, body, contractV1)
 }
 
-func rawJSONResponse(status int, body []byte) pluginapi.ManagementResponse {
+// rawJSONResponse echoes the served contract so a client can detect which shape
+// it received without parsing the body.
+func rawJSONResponse(status int, body []byte, contract int) pluginapi.ManagementResponse {
 	return pluginapi.ManagementResponse{
 		StatusCode: status,
 		Headers: http.Header{
-			"Content-Type":  []string{"application/json; charset=utf-8"},
-			"Cache-Control": []string{"no-store"},
+			"Content-Type":         []string{"application/json; charset=utf-8"},
+			"Cache-Control":        []string{"no-store"},
+			contractHeader:         []string{strconv.Itoa(contract)},
+			"X-Pi-Contract-Latest": []string{strconv.Itoa(contractLatest)},
 		},
 		Body: body,
 	}

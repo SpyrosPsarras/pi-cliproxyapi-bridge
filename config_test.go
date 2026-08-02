@@ -1,99 +1,73 @@
 package main
 
 import (
-	"strings"
 	"testing"
 )
 
+// The plugin must work as soon as it is enabled, with no configuration.
 func TestParseConfigDefaults(t *testing.T) {
 	cfg, err := parseConfig(nil)
 	if err != nil {
 		t.Fatalf("parseConfig: %v", err)
 	}
-	if cfg.ManagementKeyEnv != "MANAGEMENT_PASSWORD" {
-		t.Fatalf("management key env = %q", cfg.ManagementKeyEnv)
+	if !cfg.allowAll() {
+		t.Fatal("quota should be readable by every API key by default")
 	}
-	if len(cfg.clients) != 0 {
-		t.Fatal("expected no client keys by default (fail closed)")
+	if cfg.ShowExtraAnalytics {
+		t.Fatal("extra analytics should be off by default")
 	}
-	if cfg.UsageTTLSeconds != 60 {
-		t.Fatalf("usage ttl = %d", cfg.UsageTTLSeconds)
+	if cfg.advanced.ManagementKeyEnv != "MANAGEMENT_PASSWORD" {
+		t.Fatalf("management key env = %q", cfg.advanced.ManagementKeyEnv)
+	}
+	if cfg.advanced.UsageTTLSeconds != 60 || cfg.advanced.CapabilitiesTTLSeconds != 300 {
+		t.Fatalf("unexpected cache defaults: %+v", cfg.advanced)
 	}
 }
 
-func TestParseConfigFlatFields(t *testing.T) {
-	raw := []byte(`
-client_keys:
-  - abix:` + strings.Repeat("a", 64) + `
-  - team:` + strings.Repeat("b", 64) + `:usage+analytics
-management_url: http://127.0.0.1:8317/v0/management
-cpam_enabled: auto
-cpam_url: http://cpa-manager-plus:18317
-usage_ttl_seconds: 90
-`)
-	cfg, err := parseConfig(raw)
+func TestParseConfigEverydayFields(t *testing.T) {
+	cfg, err := parseConfig([]byte(`
+allow_all_api_keys: false
+allowed_keys:
+  - sk-one-0123456789abcdef
+  - "  "
+  - sk-two-0123456789abcdef
+show_extra_analytics: true
+`))
 	if err != nil {
 		t.Fatalf("parseConfig: %v", err)
 	}
-	if len(cfg.clients) != 2 {
-		t.Fatalf("expected two clients, got %d", len(cfg.clients))
+	if cfg.allowAll() {
+		t.Fatal("expected the allow-list to be enforced")
 	}
-	if cfg.UsageTTLSeconds != 90 {
-		t.Fatalf("usage ttl = %d", cfg.UsageTTLSeconds)
+	if len(cfg.AllowedKeys) != 2 {
+		t.Fatalf("blank entries should be dropped, got %v", cfg.AllowedKeys)
 	}
-
-	abix := cfg.clients[0]
-	if abix.ID != "abix" || !abix.allows(permissionUsage) || abix.allows(permissionAnalytics) {
-		t.Fatalf("unexpected default permissions: %+v", abix)
-	}
-	team := cfg.clients[1]
-	if !team.allows(permissionUsage) || !team.allows(permissionAnalytics) {
-		t.Fatalf("expected both permissions, got %v", team.Permissions)
+	if !cfg.ShowExtraAnalytics {
+		t.Fatal("expected extra analytics to be enabled")
 	}
 }
 
-// The sha256: prefix is optional and must not be mistaken for a field separator.
-func TestParseClientKeyAcceptsPrefixedFingerprint(t *testing.T) {
-	digest := strings.Repeat("c", 64)
-	for _, entry := range []string{"abix:" + digest, "abix:sha256:" + digest} {
-		clients, err := parseClientKeys([]string{entry})
-		if err != nil {
-			t.Fatalf("parseClientKeys(%q): %v", entry, err)
-		}
-		if len(clients) != 1 || clients[0].Fingerprint != digest {
-			t.Fatalf("entry %q produced %+v", entry, clients)
-		}
-	}
-}
-
-func TestParseClientKeyWithPrefixAndPermissions(t *testing.T) {
-	digest := strings.Repeat("d", 64)
-	clients, err := parseClientKeys([]string{"abix:sha256:" + digest + ":usage+analytics"})
+// Advanced settings are optional and only override the specific defaults named.
+func TestAdvancedOverridesSelectedDefaults(t *testing.T) {
+	cfg, err := parseConfig([]byte(`
+advanced: '{"usage_ttl_seconds": 15, "cpam_url": "http://cpam:18317/"}'
+`))
 	if err != nil {
-		t.Fatalf("parseClientKeys: %v", err)
+		t.Fatalf("parseConfig: %v", err)
 	}
-	if !clients[0].allows(permissionAnalytics) {
-		t.Fatalf("expected analytics permission, got %v", clients[0].Permissions)
+	if cfg.advanced.UsageTTLSeconds != 15 {
+		t.Fatalf("usage ttl = %d, want 15", cfg.advanced.UsageTTLSeconds)
+	}
+	if cfg.advanced.CPAMURL != "http://cpam:18317" {
+		t.Fatalf("cpam url = %q, trailing slash should be trimmed", cfg.advanced.CPAMURL)
+	}
+	if cfg.advanced.ManagementURL != defaultAdvanced().ManagementURL {
+		t.Fatalf("unrelated default was lost: %q", cfg.advanced.ManagementURL)
 	}
 }
 
-func TestParseConfigRejectsBadInput(t *testing.T) {
-	valid := strings.Repeat("a", 64)
-	cases := map[string]string{
-		"missing fingerprint": "client_keys:\n  - abix\n",
-		"short fingerprint":   "client_keys:\n  - abix:abc\n",
-		"raw key as print":    "client_keys:\n  - abix:sk-plain-key-value\n",
-		"bad alias":           "client_keys:\n  - 'a b':" + valid + "\n",
-		"duplicate alias":     "client_keys:\n  - abix:" + valid + "\n  - abix:" + strings.Repeat("b", 64) + "\n",
-		"duplicate print":     "client_keys:\n  - abix:" + valid + "\n  - other:" + valid + "\n",
-		"invalid cpam mode":   "cpam_enabled: sometimes\n",
-	}
-
-	for name, raw := range cases {
-		t.Run(name, func(t *testing.T) {
-			if _, err := parseConfig([]byte(raw)); err == nil {
-				t.Fatal("expected configuration to be rejected")
-			}
-		})
+func TestParseConfigRejectsMalformedAdvanced(t *testing.T) {
+	if _, err := parseConfig([]byte("advanced: 'not json'\n")); err == nil {
+		t.Fatal("expected malformed advanced JSON to be rejected")
 	}
 }

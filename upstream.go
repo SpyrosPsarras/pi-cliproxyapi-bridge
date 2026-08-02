@@ -94,6 +94,23 @@ func postJSON(ctx context.Context, url, bearer string, payload any, out any) err
 
 // ---- CPA management ----
 
+// fetchAPIKeys reads the API keys CLIProxyAPI itself accepts. The plugin
+// authorizes callers against this list so operators never copy key material
+// or fingerprints into the plugin configuration.
+func (c pluginConfig) fetchAPIKeys(ctx context.Context) ([]string, error) {
+	key := c.managementKey()
+	if key == "" {
+		return nil, fmt.Errorf("management key is not configured")
+	}
+	var resp struct {
+		APIKeys []string `json:"api-keys"`
+	}
+	if err := getJSON(ctx, c.advanced.ManagementURL+"/api-keys", key, &resp); err != nil {
+		return nil, err
+	}
+	return resp.APIKeys, nil
+}
+
 type authFilesResponse struct {
 	Files []authFile `json:"files"`
 }
@@ -105,10 +122,14 @@ type authFile struct {
 	Type          string `json:"type"`
 	Label         string `json:"label"`
 	Email         string `json:"email"`
+	Account       string `json:"account"`
+	ProjectID     string `json:"project_id"`
 	Status        string `json:"status"`
 	StatusMessage string `json:"status_message"`
 	Disabled      bool   `json:"disabled"`
 	Unavailable   bool   `json:"unavailable"`
+	Success       int    `json:"success"`
+	Failed        int    `json:"failed"`
 	LastRefresh   string `json:"last_refresh"`
 	UpdatedAt     string `json:"updated_at"`
 }
@@ -119,7 +140,7 @@ func (c pluginConfig) fetchAuthFiles(ctx context.Context) ([]authFile, error) {
 		return nil, fmt.Errorf("management key is not configured")
 	}
 	var resp authFilesResponse
-	if err := getJSON(ctx, c.ManagementURL+"/auth-files", key, &resp); err != nil {
+	if err := getJSON(ctx, c.advanced.ManagementURL+"/auth-files", key, &resp); err != nil {
 		return nil, err
 	}
 	return resp.Files, nil
@@ -132,6 +153,7 @@ type apiCallRequest struct {
 	Method    string            `json:"method"`
 	URL       string            `json:"url"`
 	Header    map[string]string `json:"header,omitempty"`
+	Data      string            `json:"data,omitempty"`
 }
 
 type apiCallResponse struct {
@@ -145,7 +167,7 @@ func (c pluginConfig) managementAPICall(ctx context.Context, req apiCallRequest)
 		return apiCallResponse{}, fmt.Errorf("management key is not configured")
 	}
 	var resp apiCallResponse
-	if err := postJSON(ctx, c.ManagementURL+"/api-call", key, req, &resp); err != nil {
+	if err := postJSON(ctx, c.advanced.ManagementURL+"/api-call", key, req, &resp); err != nil {
 		return apiCallResponse{}, err
 	}
 	return resp, nil
@@ -157,7 +179,7 @@ func (c pluginConfig) cpaVersion(ctx context.Context) (string, error) {
 	if key == "" {
 		return "", fmt.Errorf("management key is not configured")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.ManagementURL+"/latest-version", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.advanced.ManagementURL+"/latest-version", nil)
 	if err != nil {
 		return "", err
 	}
@@ -187,11 +209,11 @@ type cpamInfo struct {
 // probeCPAM detects a CPA Manager Plus deployment through its unauthenticated
 // mode-detection endpoint.
 func (c pluginConfig) probeCPAM(ctx context.Context) (cpamInfo, bool) {
-	if c.CPAMEnabled == "off" || c.CPAMURL == "" {
+	if !c.ShowExtraAnalytics || c.advanced.CPAMURL == "" {
 		return cpamInfo{}, false
 	}
 	var info cpamInfo
-	if err := getJSON(ctx, c.CPAMURL+"/usage-service/info", "", &info); err != nil {
+	if err := getJSON(ctx, c.advanced.CPAMURL+"/usage-service/info", "", &info); err != nil {
 		return cpamInfo{}, false
 	}
 	if info.Service != "cpa-manager-plus" {

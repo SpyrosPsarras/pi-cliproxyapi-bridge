@@ -36,12 +36,39 @@ func TestUsageAccountAlwaysSerializesGroupsArray(t *testing.T) {
 	}
 }
 
-func TestUsageDocumentOmitsEmptyUnsupportedList(t *testing.T) {
-	raw, err := json.Marshal(usageDocument{SchemaVersion: 1, Accounts: []usageAccount{}})
+// The sidecar always emits unsupportedProviders as an array, and the Pi client
+// iterates it, so a null must never be served.
+func TestUsageDocumentAlwaysSerializesUnsupportedArray(t *testing.T) {
+	raw, err := json.Marshal(usageDocument{
+		SchemaVersion: 1,
+		Accounts:      []usageAccount{},
+		Unsupported:   []string{},
+	})
 	if err != nil {
 		t.Fatalf("marshal: %v", err)
 	}
-	if strings.Contains(string(raw), "unsupportedProviders") {
-		t.Fatalf("expected unsupportedProviders to be omitted: %s", raw)
+	if strings.Contains(string(raw), `"unsupportedProviders":null`) {
+		t.Fatalf("document contains a null unsupportedProviders array: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"unsupportedProviders":[]`) {
+		t.Fatalf("expected an empty array: %s", raw)
+	}
+}
+
+// Contract v1 must be byte-compatible with the sidecar, which has no client or
+// cache section.
+func TestContractV1OmitsV2Sections(t *testing.T) {
+	raw, err := json.Marshal(usageDocument{
+		SchemaVersion: 1,
+		Accounts:      []usageAccount{},
+		Unsupported:   []string{},
+	})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	for _, section := range []string{`"client"`, `"cache"`} {
+		if strings.Contains(string(raw), section) {
+			t.Fatalf("v1 document must not contain %s: %s", section, raw)
+		}
 	}
 }
