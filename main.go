@@ -59,8 +59,9 @@ import (
 
 const (
 	pluginName    = "pi-bridge"
-	pluginVersion = "0.1.1"
+	pluginVersion = "0.1.2"
 
+	routePanel        = "/panel"
 	routeCapabilities = "/dev/capabilities"
 	routeUsage        = "/dev/usage"
 
@@ -177,12 +178,17 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 		// management-authenticated, so the plugin can accept an ordinary
 		// CLIProxyAPI API key instead of the CPA Management Key.
 		//
-		// No Menu is declared. A menu entry is opened by the panel with a
-		// plain browser navigation, which cannot carry an Authorization
-		// header, so an API endpoint listed as a menu item would always
-		// render as 401 for a human clicking it.
+		// Only the panel declares a Menu. A menu entry is opened by the
+		// management UI with a plain browser navigation, which cannot carry
+		// an Authorization header, so a bearer-protected API route listed as
+		// a menu item would always render as 401 for a human clicking it.
 		return okEnvelope(managementRegistrationResponse{
 			Resources: []pluginapi.ResourceRoute{
+				{
+					Path:        routePanel,
+					Menu:        "Pi Bridge",
+					Description: "Provider quota for the Pi CLIProxyAPI extension.",
+				},
 				{
 					Path:        routeCapabilities,
 					Description: "Capability contract consumed by the Pi CLIProxyAPI plugin.",
@@ -233,10 +239,16 @@ func pluginRegistration() registration {
 			Author:           "self-hosted",
 			GitHubRepository: "https://github.com/abix5/pi-cliproxyapi",
 			ConfigFields: []pluginapi.ConfigField{
-				{Name: "client-auth", Type: pluginapi.ConfigFieldTypeObject, Description: "Allow-listed Pi client key fingerprints and their permissions."},
-				{Name: "management", Type: pluginapi.ConfigFieldTypeObject, Description: "CPA Management API base URL and the env/file holding its key."},
-				{Name: "cpam", Type: pluginapi.ConfigFieldTypeObject, Description: "Optional CPA Manager Plus base URL and admin key source."},
-				{Name: "cache", Type: pluginapi.ConfigFieldTypeObject, Description: "TTL for cached quota and capability documents."},
+				{Name: "client_keys", Type: pluginapi.ConfigFieldTypeArray, Description: "Authorized Pi clients as alias:fingerprint[:usage+analytics]. Fingerprint is the SHA-256 of the API key, never the key itself."},
+				{Name: "management_url", Type: pluginapi.ConfigFieldTypeString, Description: "CPA Management API base URL. Defaults to http://127.0.0.1:8317/v0/management."},
+				{Name: "management_key_env", Type: pluginapi.ConfigFieldTypeString, Description: "Environment variable holding the CPA Management Key. Defaults to MANAGEMENT_PASSWORD."},
+				{Name: "management_key_file", Type: pluginapi.ConfigFieldTypeString, Description: "File holding the CPA Management Key. Takes precedence over the environment variable."},
+				{Name: "cpam_enabled", Type: pluginapi.ConfigFieldTypeEnum, EnumValues: []string{"auto", "on", "off"}, Description: "Whether to detect CPA Manager Plus. auto probes only when cpam_url is set."},
+				{Name: "cpam_url", Type: pluginapi.ConfigFieldTypeString, Description: "CPA Manager Plus base URL, for example http://cpa-manager-plus:18317."},
+				{Name: "cpam_admin_key_env", Type: pluginapi.ConfigFieldTypeString, Description: "Environment variable holding the CPAM admin key."},
+				{Name: "cpam_admin_key_file", Type: pluginapi.ConfigFieldTypeString, Description: "File holding the CPAM admin key. Takes precedence over the environment variable."},
+				{Name: "usage_ttl_seconds", Type: pluginapi.ConfigFieldTypeInteger, Description: "How long cached quota is served before refetching upstream. Defaults to 60."},
+				{Name: "capabilities_ttl_seconds", Type: pluginapi.ConfigFieldTypeInteger, Description: "How long cached capability detection is reused. Defaults to 300."},
 			},
 		},
 		Capabilities: registrationCapabilities{ManagementAPI: true},
@@ -251,6 +263,12 @@ func handleResourceRequest(raw []byte) ([]byte, error) {
 		if err := json.Unmarshal(raw, &req); err != nil {
 			return nil, fmt.Errorf("decode management request: %w", err)
 		}
+	}
+
+	// The panel carries no secrets and is reached by browser navigation, so it
+	// is served before authentication and independently of configuration state.
+	if strings.HasSuffix(req.Path, routePanel) {
+		return okEnvelope(panelResponse())
 	}
 
 	cfg, cfgErr := currentConfig()
@@ -324,7 +342,7 @@ func handleUsage(cfg pluginConfig, client clientKey, hint string, query url.Valu
 	}
 
 	cacheKey := "usage:" + client.ID
-	ttl := time.Duration(cfg.Cache.UsageTTLSeconds) * time.Second
+	ttl := time.Duration(cfg.UsageTTLSeconds) * time.Second
 
 	if isTruthy(query.Get("refresh")) {
 		// Refresh is rate limited per client so a Pi UI cannot be used to

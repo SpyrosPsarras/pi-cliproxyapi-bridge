@@ -10,49 +10,83 @@ func TestParseConfigDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("parseConfig: %v", err)
 	}
-	if cfg.Management.KeyEnv != "MANAGEMENT_PASSWORD" {
-		t.Fatalf("management key env = %q", cfg.Management.KeyEnv)
+	if cfg.ManagementKeyEnv != "MANAGEMENT_PASSWORD" {
+		t.Fatalf("management key env = %q", cfg.ManagementKeyEnv)
 	}
-	if len(cfg.ClientAuth.Keys) != 0 {
+	if len(cfg.clients) != 0 {
 		t.Fatal("expected no client keys by default (fail closed)")
 	}
-	if cfg.Cache.UsageTTLSeconds != 60 {
-		t.Fatalf("usage ttl = %d", cfg.Cache.UsageTTLSeconds)
+	if cfg.UsageTTLSeconds != 60 {
+		t.Fatalf("usage ttl = %d", cfg.UsageTTLSeconds)
 	}
 }
 
-func TestParseConfigValidClientKey(t *testing.T) {
+func TestParseConfigFlatFields(t *testing.T) {
 	raw := []byte(`
-client-auth:
-  keys:
-    - id: abix
-      fingerprint: sha256:` + strings.Repeat("a", 64) + `
-      permissions: [usage, analytics]
-cpam:
-  mode: auto
-  base-url: http://cpa-manager-plus:18317
+client_keys:
+  - abix:` + strings.Repeat("a", 64) + `
+  - team:` + strings.Repeat("b", 64) + `:usage+analytics
+management_url: http://127.0.0.1:8317/v0/management
+cpam_enabled: auto
+cpam_url: http://cpa-manager-plus:18317
+usage_ttl_seconds: 90
 `)
 	cfg, err := parseConfig(raw)
 	if err != nil {
 		t.Fatalf("parseConfig: %v", err)
 	}
-	if len(cfg.ClientAuth.Keys) != 1 {
-		t.Fatalf("expected one key, got %d", len(cfg.ClientAuth.Keys))
+	if len(cfg.clients) != 2 {
+		t.Fatalf("expected two clients, got %d", len(cfg.clients))
 	}
-	if !cfg.ClientAuth.Keys[0].allows(permissionAnalytics) {
-		t.Fatal("expected analytics permission")
+	if cfg.UsageTTLSeconds != 90 {
+		t.Fatalf("usage ttl = %d", cfg.UsageTTLSeconds)
+	}
+
+	abix := cfg.clients[0]
+	if abix.ID != "abix" || !abix.allows(permissionUsage) || abix.allows(permissionAnalytics) {
+		t.Fatalf("unexpected default permissions: %+v", abix)
+	}
+	team := cfg.clients[1]
+	if !team.allows(permissionUsage) || !team.allows(permissionAnalytics) {
+		t.Fatalf("expected both permissions, got %v", team.Permissions)
+	}
+}
+
+// The sha256: prefix is optional and must not be mistaken for a field separator.
+func TestParseClientKeyAcceptsPrefixedFingerprint(t *testing.T) {
+	digest := strings.Repeat("c", 64)
+	for _, entry := range []string{"abix:" + digest, "abix:sha256:" + digest} {
+		clients, err := parseClientKeys([]string{entry})
+		if err != nil {
+			t.Fatalf("parseClientKeys(%q): %v", entry, err)
+		}
+		if len(clients) != 1 || clients[0].Fingerprint != digest {
+			t.Fatalf("entry %q produced %+v", entry, clients)
+		}
+	}
+}
+
+func TestParseClientKeyWithPrefixAndPermissions(t *testing.T) {
+	digest := strings.Repeat("d", 64)
+	clients, err := parseClientKeys([]string{"abix:sha256:" + digest + ":usage+analytics"})
+	if err != nil {
+		t.Fatalf("parseClientKeys: %v", err)
+	}
+	if !clients[0].allows(permissionAnalytics) {
+		t.Fatalf("expected analytics permission, got %v", clients[0].Permissions)
 	}
 }
 
 func TestParseConfigRejectsBadInput(t *testing.T) {
 	valid := strings.Repeat("a", 64)
 	cases := map[string]string{
-		"missing id":        "client-auth:\n  keys:\n    - fingerprint: sha256:" + valid + "\n",
-		"short fingerprint": "client-auth:\n  keys:\n    - id: a\n      fingerprint: sha256:abc\n",
-		"raw key as print":  "client-auth:\n  keys:\n    - id: a\n      fingerprint: sk-plain-key\n",
-		"duplicate id":      "client-auth:\n  keys:\n    - id: a\n      fingerprint: sha256:" + valid + "\n    - id: a\n      fingerprint: sha256:" + strings.Repeat("b", 64) + "\n",
-		"duplicate print":   "client-auth:\n  keys:\n    - id: a\n      fingerprint: sha256:" + valid + "\n    - id: b\n      fingerprint: sha256:" + valid + "\n",
-		"invalid cpam mode": "cpam:\n  mode: sometimes\n",
+		"missing fingerprint": "client_keys:\n  - abix\n",
+		"short fingerprint":   "client_keys:\n  - abix:abc\n",
+		"raw key as print":    "client_keys:\n  - abix:sk-plain-key-value\n",
+		"bad alias":           "client_keys:\n  - 'a b':" + valid + "\n",
+		"duplicate alias":     "client_keys:\n  - abix:" + valid + "\n  - abix:" + strings.Repeat("b", 64) + "\n",
+		"duplicate print":     "client_keys:\n  - abix:" + valid + "\n  - other:" + valid + "\n",
+		"invalid cpam mode":   "cpam_enabled: sometimes\n",
 	}
 
 	for name, raw := range cases {
@@ -61,17 +95,5 @@ func TestParseConfigRejectsBadInput(t *testing.T) {
 				t.Fatal("expected configuration to be rejected")
 			}
 		})
-	}
-}
-
-func TestParseConfigDefaultsPermissionToUsage(t *testing.T) {
-	raw := []byte("client-auth:\n  keys:\n    - id: abix\n      fingerprint: sha256:" + strings.Repeat("c", 64) + "\n")
-	cfg, err := parseConfig(raw)
-	if err != nil {
-		t.Fatalf("parseConfig: %v", err)
-	}
-	key := cfg.ClientAuth.Keys[0]
-	if !key.allows(permissionUsage) || key.allows(permissionAnalytics) {
-		t.Fatalf("unexpected default permissions: %v", key.Permissions)
 	}
 }

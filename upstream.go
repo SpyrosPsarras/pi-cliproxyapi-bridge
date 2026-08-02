@@ -119,7 +119,7 @@ func (c pluginConfig) fetchAuthFiles(ctx context.Context) ([]authFile, error) {
 		return nil, fmt.Errorf("management key is not configured")
 	}
 	var resp authFilesResponse
-	if err := getJSON(ctx, c.Management.BaseURL+"/auth-files", key, &resp); err != nil {
+	if err := getJSON(ctx, c.ManagementURL+"/auth-files", key, &resp); err != nil {
 		return nil, err
 	}
 	return resp.Files, nil
@@ -145,7 +145,7 @@ func (c pluginConfig) managementAPICall(ctx context.Context, req apiCallRequest)
 		return apiCallResponse{}, fmt.Errorf("management key is not configured")
 	}
 	var resp apiCallResponse
-	if err := postJSON(ctx, c.Management.BaseURL+"/api-call", key, req, &resp); err != nil {
+	if err := postJSON(ctx, c.ManagementURL+"/api-call", key, req, &resp); err != nil {
 		return apiCallResponse{}, err
 	}
 	return resp, nil
@@ -157,7 +157,7 @@ func (c pluginConfig) cpaVersion(ctx context.Context) (string, error) {
 	if key == "" {
 		return "", fmt.Errorf("management key is not configured")
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.Management.BaseURL+"/latest-version", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.ManagementURL+"/latest-version", nil)
 	if err != nil {
 		return "", err
 	}
@@ -187,11 +187,11 @@ type cpamInfo struct {
 // probeCPAM detects a CPA Manager Plus deployment through its unauthenticated
 // mode-detection endpoint.
 func (c pluginConfig) probeCPAM(ctx context.Context) (cpamInfo, bool) {
-	if c.CPAM.Mode == "off" || c.CPAM.BaseURL == "" {
+	if c.CPAMEnabled == "off" || c.CPAMURL == "" {
 		return cpamInfo{}, false
 	}
 	var info cpamInfo
-	if err := getJSON(ctx, c.CPAM.BaseURL+"/usage-service/info", "", &info); err != nil {
+	if err := getJSON(ctx, c.CPAMURL+"/usage-service/info", "", &info); err != nil {
 		return cpamInfo{}, false
 	}
 	if info.Service != "cpa-manager-plus" {

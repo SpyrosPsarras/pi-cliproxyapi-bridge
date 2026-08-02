@@ -28,18 +28,27 @@ func registeredResources(t *testing.T) managementRegistrationResponse {
 }
 
 // The panel opens a menu entry with a plain browser navigation, which cannot
-// send an Authorization header. Declaring a Menu on these API routes would
-// therefore surface a guaranteed 401 to anyone clicking it in the UI.
-func TestResourceRoutesDeclareNoMenu(t *testing.T) {
+// send an Authorization header. Only the HTML panel may carry a Menu; the
+// bearer-protected JSON endpoints must not, or clicking them in the UI would
+// always render a 401.
+func TestOnlyPanelDeclaresMenu(t *testing.T) {
 	resp := registeredResources(t)
 
 	if len(resp.Resources) == 0 {
 		t.Fatal("expected resource routes to be registered")
 	}
+	menus := 0
 	for _, route := range resp.Resources {
-		if route.Menu != "" {
-			t.Fatalf("route %s must not declare a menu entry, got %q", route.Path, route.Menu)
+		if route.Menu == "" {
+			continue
 		}
+		menus++
+		if route.Path != routePanel {
+			t.Fatalf("API route %s must not declare a menu entry, got %q", route.Path, route.Menu)
+		}
+	}
+	if menus != 1 {
+		t.Fatalf("expected exactly one menu entry, got %d", menus)
 	}
 }
 
@@ -57,7 +66,7 @@ func TestRegisteredRoutePaths(t *testing.T) {
 	for _, route := range resp.Resources {
 		found[route.Path] = true
 	}
-	for _, want := range []string{routeCapabilities, routeUsage} {
+	for _, want := range []string{routePanel, routeCapabilities, routeUsage} {
 		if !found[want] {
 			t.Fatalf("expected route %s to be registered", want)
 		}

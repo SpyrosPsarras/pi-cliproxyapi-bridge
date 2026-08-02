@@ -29,6 +29,12 @@ GET /v0/resource/plugins/pi-bridge/dev/usage?refresh=1
 Authorization: Bearer <ordinary CLIProxyAPI API key>
 ```
 
+Plus the unauthenticated management UI page:
+
+```http
+GET /v0/resource/plugins/pi-bridge/panel
+```
+
 `/dev/usage` returns the same `schemaVersion: 1` document shape the Pi plugin
 already renders, so the client contract does not change:
 
@@ -52,7 +58,8 @@ already renders, so the client contract does not change:
 
 ## Configuration
 
-Under `plugins.configs.pi-bridge` in the CLIProxyAPI `config.yaml`:
+Under `plugins.configs.pi-bridge` in the CLIProxyAPI `config.yaml`. Every field is
+a flat scalar or a list, so the management UI renders real inputs:
 
 ```yaml
 plugins:
@@ -60,28 +67,41 @@ plugins:
     pi-bridge:
       enabled: true
       priority: 3
-      client-auth:
-        keys:
-          - id: abix
-            fingerprint: sha256:<64 lowercase hex of the API key>
-            permissions: [usage]
-      management:
-        base-url: http://127.0.0.1:8317/v0/management
-        key-env: MANAGEMENT_PASSWORD
-      cpam:
-        mode: auto
-        base-url: http://cpa-manager-plus:18317
-        admin-key-file: /run/secrets/cpam_admin_key
-      cache:
-        usage-ttl-seconds: 60
-        capabilities-ttl-seconds: 300
+      store:
+        version: 0.1.2
+      client_keys:
+        - abix:<64-hex sha256 of the API key>
+        - team:<64-hex>:usage+analytics
+      management_url: http://127.0.0.1:8317/v0/management
+      management_key_env: MANAGEMENT_PASSWORD
+      cpam_enabled: auto
+      cpam_url: http://cpa-manager-plus:18317
+      cpam_admin_key_file: /run/secrets/cpam_admin_key
+      usage_ttl_seconds: 60
+      capabilities_ttl_seconds: 300
 ```
+
+`client_keys` entries are `alias:fingerprint[:permissions]`. The alias is a safe
+label shown in responses, the fingerprint is the SHA-256 of the API key (an
+optional `sha256:` prefix is accepted), and permissions are `+`-separated,
+defaulting to `usage`.
 
 Generate a fingerprint without printing the key:
 
 ```bash
-printf '%s' "$API_KEY" | shasum -a 256 | awk '{print "sha256:"$1}'
+printf '%s' "$API_KEY" | shasum -a 256 | awk '{print $1}'
 ```
+
+### Management UI
+
+The plugin adds a **Pi Bridge** menu entry serving a static page that documents
+the endpoints and can display quota. The page holds no credentials: a key typed
+there stays in the browser tab and is sent directly to the usage endpoint.
+
+Only this HTML page declares a menu. The JSON endpoints deliberately do not: the
+UI opens menu entries with `window.open`, a plain navigation that cannot carry an
+`Authorization` header, so a bearer-protected route listed as a menu item would
+always render as `401`.
 
 ### Secret handling
 

@@ -25,9 +25,9 @@ func authenticate(cfg pluginConfig, headers http.Header) (clientKey, string, boo
 	}
 
 	sum := sha256.Sum256([]byte(token))
-	got := "sha256:" + hex.EncodeToString(sum[:])
+	got := hex.EncodeToString(sum[:])
 
-	for _, candidate := range cfg.ClientAuth.Keys {
+	for _, candidate := range cfg.clients {
 		if subtle.ConstantTimeCompare([]byte(got), []byte(candidate.Fingerprint)) == 1 {
 			return candidate, maskKey(token), true
 		}

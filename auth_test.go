@@ -10,12 +10,12 @@ import (
 
 func fingerprintOf(token string) string {
 	sum := sha256.Sum256([]byte(token))
-	return "sha256:" + hex.EncodeToString(sum[:])
+	return hex.EncodeToString(sum[:])
 }
 
 func testConfig(token string, permissions ...string) pluginConfig {
 	cfg := defaultConfig()
-	cfg.ClientAuth.Keys = []clientKey{{
+	cfg.clients = []clientKey{{
 		ID:          "abix",
 		Fingerprint: fingerprintOf(token),
 		Permissions: permissions,
