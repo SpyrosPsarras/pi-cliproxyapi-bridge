@@ -59,7 +59,7 @@ import (
 
 const (
 	pluginName    = "pi-bridge"
-	pluginVersion = "0.1.0"
+	pluginVersion = "0.1.1"
 
 	routeCapabilities = "/dev/capabilities"
 	routeUsage        = "/dev/usage"

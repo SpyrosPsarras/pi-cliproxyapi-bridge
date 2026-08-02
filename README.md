@@ -108,9 +108,47 @@ printf '%s' "$API_KEY" | shasum -a 256 | awk '{print "sha256:"$1}'
 ./build.sh
 ```
 
-Produces `dist/pi-bridge.so` for `linux/amd64`, built against SDK `v7.2.93`.
-The SDK version must match the running CLIProxyAPI image or `cliproxy_plugin_init`
-will be rejected.
+Produces `dist/pi-bridge-v<version>.so` for `linux/amd64`, built against SDK
+`v7.2.93`. The SDK version must match the running CLIProxyAPI image or
+`cliproxy_plugin_init` will be rejected.
+
+## Deploy without restarting CLIProxyAPI
+
+CLIProxyAPI watches `config.yaml` (and the auth dir) with fsnotify. Touching the
+config triggers a reload that loads plugins and re-registers their routes, so a
+container restart is not needed — and a restart would interrupt in-flight model
+traffic.
+
+The host only hot-reloads a plugin when its file **path** changes, so overwriting
+a `.so` in place has no effect. Ship each build under its own versioned name:
+
+```bash
+# 1. copy the new artifact alongside the current one
+scp dist/pi-bridge-v0.1.1.so root@host:/root/projects/llm-proxy/CLIProxyAPI/plugins/
+
+# 2. touch the config to trigger the watcher
+ssh root@host "touch /root/projects/llm-proxy/CLIProxyAPI/data/config.yaml"
+```
+
+With several versions present the host selects the highest one. Pin a specific
+build — or roll back — with `store.version`:
+
+```yaml
+plugins:
+  configs:
+    pi-bridge:
+      store:
+        version: 0.1.0
+```
+
+Confirm the swap in the logs:
+
+```
+pluginhost: plugin hot reloaded plugin_id=pi-bridge
+```
+
+Keep the previous `.so` in place as a rollback target. Old files are pruned only
+once per process start, never during a reload.
 
 ## Test
 
