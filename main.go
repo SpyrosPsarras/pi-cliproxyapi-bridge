@@ -60,7 +60,7 @@ import (
 
 const (
 	pluginName    = "pi-bridge"
-	pluginVersion = "0.3.2"
+	pluginVersion = "0.4.0"
 
 	routePanel        = "/panel"
 	routeCapabilities = "/dev/capabilities"
@@ -241,7 +241,30 @@ func applyLifecycleConfig(request []byte) {
 	capCache = newTTLCache()
 }
 
+// knownKeyChoices lists the API keys CLIProxyAPI accepts, masked, so the
+// management UI can offer them as choices instead of asking an operator to
+// paste key material. Registration is synchronous, so this is best effort: an
+// unreachable management API yields no choices rather than a failed load.
+func knownKeyChoices(cfg pluginConfig) []string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	keys, err := cfg.fetchAPIKeys(ctx)
+	if err != nil {
+		return nil
+	}
+	choices := make([]string, 0, len(keys))
+	for _, key := range keys {
+		if key = strings.TrimSpace(key); key != "" {
+			choices = append(choices, maskKey(key))
+		}
+	}
+	return choices
+}
+
 func pluginRegistration() registration {
+	cfg, _ := currentConfig()
+
 	return registration{
 		SchemaVersion: pluginabi.SchemaVersion,
 		Metadata: pluginapi.Metadata{
@@ -251,7 +274,12 @@ func pluginRegistration() registration {
 			GitHubRepository: "https://github.com/abix5/pi-cliproxyapi",
 			ConfigFields: []pluginapi.ConfigField{
 				{Name: "allow_all_api_keys", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Let every CLIProxyAPI API key read provider quota. Turn off to restrict access to the keys listed below. Default: on."},
-				{Name: "allowed_keys", Type: pluginapi.ConfigFieldTypeArray, Description: "API keys allowed to read quota when the checkbox above is off. Paste a full key or its unique tail."},
+				{
+					Name:        "allowed_keys",
+					Type:        pluginapi.ConfigFieldTypeArray,
+					EnumValues:  knownKeyChoices(cfg),
+					Description: "Keys allowed to read quota when the checkbox above is off. Pick from the listed keys; a full key also works.",
+				},
 				{Name: "show_extra_analytics", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Expose extra analytics when CPA Manager Plus is installed."},
 				{Name: "advanced", Type: pluginapi.ConfigFieldTypeString, Description: `Optional JSON overriding defaults that rarely change, for example {"usage_ttl_seconds":60}. Leave empty unless a URL, secret source, or cache TTL must differ.`},
 			},

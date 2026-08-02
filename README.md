@@ -92,12 +92,14 @@ plugins:
       store:
         version: 0.2.0
       allow_all_api_keys: true      # off = only allowed_keys may read quota
-      allowed_keys: []              # full key or its unique tail
+      allowed_keys: []              # picked from the plugin's own key list
       show_extra_analytics: false   # requires CPA Manager Plus
 ```
 
 Callers are authorized against the keys CLIProxyAPI itself accepts, read from
-the management API. No fingerprints, hashes, or key material are stored here.
+the management API. The plugin offers those keys as choices in masked form
+(`sk-dac8…8038`), so `allowed_keys` is filled by picking from a list rather than
+pasting key material. No fingerprints, hashes, or full keys are stored here.
 
 ### Advanced (optional)
 

@@ -73,8 +73,20 @@ func TestAllowListRestrictsAccess(t *testing.T) {
 	}
 }
 
-// Operators copy the shortened key shown in the UI, so a unique tail is
-// accepted as well as the whole key.
+// The management UI lists keys in masked form and stores what was picked, so
+// the masked rendering must authorize its key.
+func TestAllowListAcceptsMaskedKey(t *testing.T) {
+	cfg := restrictedConfig(maskKey(testKey))
+	if _, ok := authenticate(cfg, knownKeys, bearer(testKey)); !ok {
+		t.Fatalf("expected the masked key %q to match", maskKey(testKey))
+	}
+	// The mask must still identify exactly one key.
+	if _, ok := authenticate(cfg, knownKeys, bearer("sk-other-key-98765432100000")); ok {
+		t.Fatal("a masked entry must not authorize a different key")
+	}
+}
+
+// Hand-written configs may carry a unique tail rather than the masked form.
 func TestAllowListAcceptsKeyTail(t *testing.T) {
 	cfg := restrictedConfig("0123456789abcdef")
 	if _, ok := authenticate(cfg, knownKeys, bearer(testKey)); !ok {

@@ -39,11 +39,11 @@ func authenticate(cfg pluginConfig, knownKeys []string, headers http.Header) (au
 	}
 
 	// The key must be a real CLIProxyAPI key regardless of the allow-list, so
-	// an arbitrary string can never pass by matching a permissive suffix.
-	if !matchesAny(token, knownKeys, true) {
+	// an arbitrary string can never pass by matching a permissive entry.
+	if !isKnownKey(token, knownKeys) {
 		return authenticatedClient{}, false
 	}
-	if !cfg.allowAll() && !matchesAny(token, cfg.AllowedKeys, false) {
+	if !cfg.allowAll() && !matchesAllowList(token, cfg.AllowedKeys) {
 		return authenticatedClient{}, false
 	}
 
@@ -54,14 +54,31 @@ func authenticate(cfg pluginConfig, knownKeys []string, headers http.Header) (au
 	return authenticatedClient{KeyHint: maskKey(token), Permissions: permissions}, true
 }
 
-// matchesAny reports whether token matches an entry. Operators may paste a
-// full key or the unique tail shown in the UI, so a suffix match is accepted
-// for allow-list entries; identity checks require the whole key.
-func matchesAny(token string, entries []string, exactOnly bool) bool {
+// isKnownKey reports whether the token is one of the keys CLIProxyAPI accepts.
+func isKnownKey(token string, knownKeys []string) bool {
+	matched := false
+	for _, key := range knownKeys {
+		if subtle.ConstantTimeCompare([]byte(token), []byte(strings.TrimSpace(key))) == 1 {
+			matched = true
+		}
+	}
+	return matched
+}
+
+// matchesAllowList reports whether the token was selected by the operator.
+// Entries come from the plugin's own dropdown, which lists keys in masked form
+// (sk-abc12…7890), so the masked rendering is the primary match. A full key or
+// a sufficiently long tail is accepted too, for configs written by hand.
+func matchesAllowList(token string, entries []string) bool {
+	masked := maskKey(token)
 	matched := false
 	for _, entry := range entries {
 		entry = strings.TrimSpace(entry)
 		if entry == "" {
+			continue
+		}
+		if subtle.ConstantTimeCompare([]byte(masked), []byte(entry)) == 1 {
+			matched = true
 			continue
 		}
 		if subtle.ConstantTimeCompare([]byte(token), []byte(entry)) == 1 {
@@ -69,7 +86,7 @@ func matchesAny(token string, entries []string, exactOnly bool) bool {
 			continue
 		}
 		// A short suffix would authorize far too many keys.
-		if !exactOnly && len(entry) >= 8 && len(entry) < len(token) && strings.HasSuffix(token, entry) {
+		if len(entry) >= 8 && len(entry) < len(token) && strings.HasSuffix(token, entry) {
 			matched = true
 		}
 	}
