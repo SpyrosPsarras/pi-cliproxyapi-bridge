@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -111,6 +112,38 @@ func (c pluginConfig) fetchAPIKeys(ctx context.Context) ([]string, error) {
 	return resp.APIKeys, nil
 }
 
+// fetchModels reads the model list the proxy serves.
+//
+// /v1/models is a client endpoint and rejects the management key, so discovery
+// borrows one of the proxy's own API keys. The plugin already reads that list
+// to authorize callers, so this introduces no new secret.
+func (c pluginConfig) fetchModels(ctx context.Context) ([]upstreamModel, error) {
+	keys, err := c.fetchAPIKeys(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var clientKey string
+	for _, key := range keys {
+		if key = strings.TrimSpace(key); key != "" {
+			clientKey = key
+			break
+		}
+	}
+	if clientKey == "" {
+		return nil, fmt.Errorf("proxy has no API key to read the model list with")
+	}
+
+	// The model list lives on the proxy root, not under the management prefix.
+	base := strings.TrimSuffix(c.advanced.ManagementURL, "/v0/management")
+	var resp struct {
+		Data []upstreamModel `json:"data"`
+	}
+	if err := getJSON(ctx, base+"/v1/models", clientKey, &resp); err != nil {
+		return nil, err
+	}
+	return resp.Data, nil
+}
+
 type authFilesResponse struct {
 	Files []authFile `json:"files"`
 }
@@ -196,6 +229,33 @@ func (c pluginConfig) cpaVersion(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("upstream returned status %d", resp.StatusCode)
 	}
 	return resp.Header.Get("X-CPA-VERSION"), nil
+}
+
+// cpamPrices is CPAM's model price table, which also carries context limits in
+// its raw upstream payload.
+type cpamPrices struct {
+	Prices map[string]struct {
+		Prompt        float64 `json:"prompt"`
+		Completion    float64 `json:"completion"`
+		CacheRead     float64 `json:"cacheRead"`
+		CacheCreation float64 `json:"cacheCreation"`
+		SourceModelID string  `json:"sourceModelId"`
+		RawJSON       string  `json:"rawJson"`
+	} `json:"prices"`
+}
+
+// fetchCPAMPrices reads the operator-curated price table from CPA Manager Plus.
+// It needs the CPAM admin key, which is separate from the CPA management key.
+func (c pluginConfig) fetchCPAMPrices(ctx context.Context) (cpamPrices, error) {
+	key := c.cpamAdminKey()
+	if key == "" || c.advanced.CPAMURL == "" {
+		return cpamPrices{}, fmt.Errorf("CPAM admin key is not configured")
+	}
+	var out cpamPrices
+	if err := getJSON(ctx, c.advanced.CPAMURL+"/v0/management/model-prices", key, &out); err != nil {
+		return cpamPrices{}, err
+	}
+	return out, nil
 }
 
 // ---- CPAM ----

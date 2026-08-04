@@ -42,6 +42,27 @@ type advancedConfig struct {
 	CPAMAdminKeyFile       string `json:"cpam_admin_key_file"`
 	UsageTTLSeconds        int    `json:"usage_ttl_seconds"`
 	CapabilitiesTTLSeconds int    `json:"capabilities_ttl_seconds"`
+	PublicBaseURL          string `json:"public_base_url"`
+
+	// ModelAliases rebinds a proxy model id onto a different models.dev id.
+	// Proxy model names rarely match the catalogue exactly, and a near-miss
+	// silently yields the wrong context window, so the mapping is explicit.
+	ModelAliases map[string]string `json:"model_aliases"`
+
+	// ModelOverrides sets metadata directly for models the catalogue does not
+	// know, or where its numbers are wrong for this deployment. It wins over
+	// both the alias and the catalogue.
+	ModelOverrides map[string]modelOverride `json:"model_overrides"`
+}
+
+// modelOverride carries hand-written metadata for one model id. Absent fields
+// fall through to the catalogue rather than zeroing it.
+type modelOverride struct {
+	Name          string     `json:"name"`
+	ContextWindow int        `json:"context_window"`
+	MaxTokens     int        `json:"max_tokens"`
+	Reasoning     *bool      `json:"reasoning"`
+	Cost          *modelCost `json:"cost"`
 }
 
 func defaultAdvanced() advancedConfig {
@@ -170,6 +191,28 @@ func (c pluginConfig) managementKey() string {
 	return readSecret(c.advanced.ManagementKeyEnv, c.advanced.ManagementKeyFile)
 }
 
+// defaultCPAMAdminKeyFile is the default location the plugin reads the CPAM
+// admin key from, so the secret stays out of config.yaml.
+const defaultCPAMAdminKeyFile = "/CLIProxyAPI/cpam-admin-key"
+
+// cpamAdminKey resolves the CPA Manager Plus admin key.
+//
+// The key is deliberately NOT a config field: a plugin cannot rewrite
+// config.yaml, so anything typed into the panel would stay in that file in
+// clear text and be readable through the plugin listing. It is read from a
+// file or environment variable instead.
 func (c pluginConfig) cpamAdminKey() string {
-	return readSecret(c.advanced.CPAMAdminKeyEnv, c.advanced.CPAMAdminKeyFile)
+	if key := readSecret(c.advanced.CPAMAdminKeyEnv, c.advanced.CPAMAdminKeyFile); key != "" {
+		return key
+	}
+	return readSecret("CPAM_ADMIN_KEY", defaultCPAMAdminKeyFile)
+}
+
+// publicBaseURL is the endpoint clients should call. It defaults to the value
+// configured in advanced settings and falls back to the proxy's own address.
+func (c pluginConfig) publicBaseURL() string {
+	if url := strings.TrimSpace(c.advanced.PublicBaseURL); url != "" {
+		return strings.TrimRight(url, "/")
+	}
+	return strings.TrimSuffix(c.advanced.ManagementURL, "/v0/management") + "/v1"
 }

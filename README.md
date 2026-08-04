@@ -26,8 +26,39 @@ CLIProxyAPI API key:
 GET /v0/resource/plugins/pi-bridge/dev/capabilities
 GET /v0/resource/plugins/pi-bridge/dev/usage
 GET /v0/resource/plugins/pi-bridge/dev/usage?refresh=1
+GET /v0/resource/plugins/pi-bridge/dev/well-known
 Authorization: Bearer <ordinary CLIProxyAPI API key>
 ```
+
+## Model metadata
+
+`dev/well-known` serves the model catalogue. Metadata for each model is resolved
+in order:
+
+| Source | Notes |
+| --- | --- |
+| `model_overrides` | hand-written, wins outright, applied field by field |
+| CPA Manager Plus | operator-curated prices; needs its admin key |
+| models.dev | via `model_aliases` when the proxy id differs |
+| defaults | 128k/16k, reported as `metadataSource: "default"` |
+
+Where several providers publish the same id, the model's own vendor wins; with
+no vendor entry, the metadata most hosts agree on wins. Ties break on provider
+name so the same model never changes limits between restarts.
+
+Every model reports `metadataSource`, and contract v2 lists `unmatchedIds`, so
+it is visible which models still need an alias or override:
+
+```yaml
+      advanced: |
+        {"model_aliases":   {"house-model": "gpt-5.6-sol"},
+         "model_overrides": {"custom-llm": {"context_window": 262144}}}
+```
+
+The CPAM admin key is read from `/CLIProxyAPI/cpam-admin-key` or
+`$CPAM_ADMIN_KEY`. It is deliberately not a config field: a plugin cannot
+rewrite `config.yaml`, so anything typed into the panel would stay there in
+clear text.
 
 Plus the unauthenticated management UI page:
 

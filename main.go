@@ -60,11 +60,12 @@ import (
 
 const (
 	pluginName    = "pi-bridge"
-	pluginVersion = "0.5.0"
+	pluginVersion = "0.6.6"
 
 	routePanel        = "/panel"
 	routeCapabilities = "/dev/capabilities"
 	routeUsage        = "/dev/usage"
+	routeWellKnown    = "/dev/well-known"
 
 	// contractHeader selects the response contract. Absent means v1, which is
 	// byte-compatible with the sidecar so an unmigrated client keeps working.
@@ -208,6 +209,10 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 					Path:        routeUsage,
 					Description: "Cached provider quota for authorized Pi client keys.",
 				},
+				{
+					Path:        routeWellKnown,
+					Description: "Model catalogue served to the Pi extension.",
+				},
 			},
 		})
 
@@ -285,8 +290,8 @@ func pluginRegistration() registration {
 	}
 	fields = append(fields, keyCheckboxFields(cfg)...)
 	fields = append(fields,
-		pluginapi.ConfigField{Name: "show_extra_analytics", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Expose extra analytics when CPA Manager Plus is installed."},
-		pluginapi.ConfigField{Name: "advanced", Type: pluginapi.ConfigFieldTypeString, Description: `Optional JSON overriding defaults that rarely change, for example {"usage_ttl_seconds":60}. Leave empty unless a URL, secret source, or cache TTL must differ.`},
+		pluginapi.ConfigField{Name: "show_extra_analytics", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Use CPA Manager Plus for curated model prices and extra analytics. Its admin key is read from /CLIProxyAPI/cpam-admin-key or $CPAM_ADMIN_KEY, never from this config."},
+		pluginapi.ConfigField{Name: "advanced", Type: pluginapi.ConfigFieldTypeString, Description: `Optional JSON overriding defaults that rarely change, for example {"usage_ttl_seconds":60} or {"model_aliases":{"my-model":"gpt-5.6-sol"}}. Leave empty otherwise.`},
 	)
 
 	return registration{
@@ -343,6 +348,8 @@ func handleResourceRequest(raw []byte) ([]byte, error) {
 		return handleCapabilities(cfg, client, contractFrom(req.Headers))
 	case strings.HasSuffix(req.Path, routeUsage):
 		return handleUsage(cfg, client, req.Query, contractFrom(req.Headers))
+	case strings.HasSuffix(req.Path, routeWellKnown):
+		return handleWellKnown(cfg, req.Query, contractFrom(req.Headers))
 	default:
 		return okEnvelope(jsonResponse(http.StatusNotFound, map[string]string{"error": "not found"}))
 	}
@@ -476,6 +483,59 @@ func shapeForContract(encoded []byte, contract int, client authenticatedClient, 
 		TTLMs:     int(ttl.Milliseconds()),
 	}
 
+	patched, err := json.Marshal(doc)
+	if err != nil {
+		return encoded
+	}
+	return patched
+}
+
+// handleWellKnown serves the model catalogue. Like usage, the document is
+// identical for every authorized caller, so one cache entry serves all.
+func handleWellKnown(cfg pluginConfig, query url.Values, contract int) ([]byte, error) {
+	const cacheKey = "well-known"
+	ttl := time.Duration(cfg.advanced.CapabilitiesTTLSeconds) * time.Second
+
+	if isTruthy(query.Get("refresh")) {
+		usageCache.invalidate(cacheKey)
+	}
+	if cached, _, ok := usageCache.get(cacheKey); ok {
+		return okEnvelope(rawJSONResponse(http.StatusOK, shapeDiscovery(cached, contract), contract))
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	doc, err := buildDiscovery(ctx, cfg, cfg.publicBaseURL())
+	if err != nil {
+		return okEnvelope(jsonResponse(http.StatusBadGateway, map[string]string{"error": "upstream model list is unavailable"}))
+	}
+
+	encoded, err := json.Marshal(doc)
+	if err != nil {
+		return nil, err
+	}
+	usageCache.put(cacheKey, encoded, ttl)
+	return okEnvelope(rawJSONResponse(http.StatusOK, shapeDiscovery(encoded, contract), contract))
+}
+
+// shapeDiscovery strips the v2-only sections for v1 callers, so the document
+// stays byte-compatible with what the sidecar served.
+func shapeDiscovery(encoded []byte, contract int) []byte {
+	if contract >= contractLatest {
+		return encoded
+	}
+	var doc discoveryDocument
+	if err := json.Unmarshal(encoded, &doc); err != nil {
+		return encoded
+	}
+	doc.Upstream = nil
+	doc.Catalog = nil
+	doc.Providers = nil
+	for i := range doc.CustomModelPool {
+		doc.CustomModelPool[i].FromCatalog = false
+		doc.CustomModelPool[i].MetadataSource = ""
+	}
 	patched, err := json.Marshal(doc)
 	if err != nil {
 		return encoded
