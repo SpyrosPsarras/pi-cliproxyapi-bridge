@@ -60,7 +60,7 @@ import (
 
 const (
 	pluginName    = "pi-bridge"
-	pluginVersion = "0.7.0"
+	pluginVersion = "0.7.1"
 
 	routePanel        = "/panel"
 	routeCapabilities = "/capabilities"
@@ -79,9 +79,7 @@ const (
 
 	// documentationURL is surfaced to clients still on v1 so the warning they
 	// show can point at the upgrade instructions.
-	documentationURL = "https://github.com/abix5/pi-cliproxyapi#pi-bridge"
-
-	refreshInterval = 30 * time.Second
+	documentationURL = "https://github.com/abix5/pi-cliproxyapi-bridge#pi-bridge"
 )
 
 // ---- host RPC envelope ----
@@ -444,8 +442,10 @@ func handleUsage(cfg pluginConfig, client authenticatedClient, query url.Values,
 
 	if isTruthy(query.Get("refresh")) {
 		// Refresh is rate limited per client so a Pi UI cannot be used to
-		// hammer the upstream provider quota endpoints.
-		if refreshers.allow(client.KeyHint, refreshInterval) {
+		// hammer the upstream provider quota endpoints. Reuse the cache TTL as
+		// the floor: a manual refresh may skip the wait once the cached copy is
+		// due anyway, but it must not poll faster than the providers allow.
+		if refreshers.allow(client.KeyHint, ttl) {
 			usageCache.invalidate(cacheKey)
 		}
 	}

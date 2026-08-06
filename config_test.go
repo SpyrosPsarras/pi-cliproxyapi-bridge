@@ -19,7 +19,7 @@ func TestParseConfigDefaults(t *testing.T) {
 	if cfg.advanced.ManagementKeyEnv != "MANAGEMENT_PASSWORD" {
 		t.Fatalf("management key env = %q", cfg.advanced.ManagementKeyEnv)
 	}
-	if cfg.advanced.UsageTTLSeconds != 60 || cfg.advanced.CapabilitiesTTLSeconds != 300 {
+	if cfg.advanced.UsageTTLSeconds != 120 || cfg.advanced.CapabilitiesTTLSeconds != 300 {
 		t.Fatalf("unexpected cache defaults: %+v", cfg.advanced)
 	}
 }
