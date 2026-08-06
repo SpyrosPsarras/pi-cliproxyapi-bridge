@@ -1,3 +1,6 @@
 dist/
 *.so
 *.h
+
+# Local build output (a stray host binary was committed once)
+/pi-bridge
