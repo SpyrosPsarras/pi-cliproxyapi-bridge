@@ -23,10 +23,10 @@ Both are served under `/v0/resource/plugins/pi-bridge/` and take the normal
 CLIProxyAPI API key:
 
 ```http
-GET /v0/resource/plugins/pi-bridge/dev/capabilities
-GET /v0/resource/plugins/pi-bridge/dev/usage
-GET /v0/resource/plugins/pi-bridge/dev/usage?refresh=1
-GET /v0/resource/plugins/pi-bridge/dev/well-known
+GET /v0/resource/plugins/pi-bridge/capabilities
+GET /v0/resource/plugins/pi-bridge/usage
+GET /v0/resource/plugins/pi-bridge/usage?refresh=1
+GET /v0/resource/plugins/pi-bridge/well-known
 Authorization: Bearer <ordinary CLIProxyAPI API key>
 ```
 
@@ -59,6 +59,10 @@ The CPAM admin key is read from `/CLIProxyAPI/cpam-admin-key` or
 `$CPAM_ADMIN_KEY`. It is deliberately not a config field: a plugin cannot
 rewrite `config.yaml`, so anything typed into the panel would stay there in
 clear text.
+
+The same routes are also served under a `/dev/` prefix, which is how they were
+addressed while the plugin was in testing. Clients can migrate on their own
+schedule.
 
 Plus the unauthenticated management UI page:
 

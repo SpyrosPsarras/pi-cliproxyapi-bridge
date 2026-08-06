@@ -107,3 +107,22 @@ func TestUsageIsRefusedWhenCredentialsCannotBeVerified(t *testing.T) {
 		t.Fatalf("usage status = %d, want 401 or 503", resp.StatusCode)
 	}
 }
+
+// The /dev/ prefix was only ever a testing convenience. Both spellings must
+// resolve so a client can be updated after the server, not in lockstep.
+func TestLegacyDevPathsStillResolve(t *testing.T) {
+	base := "/v0/resource/plugins/pi-bridge"
+	for _, path := range []string{
+		base + routeUsage,
+		base + legacyRoutePrefix + routeUsage,
+		base + routeWellKnown,
+		base + legacyRoutePrefix + routeWellKnown,
+	} {
+		resp := handleRequest(t, pluginapi.ManagementRequest{Method: http.MethodGet, Path: path})
+		// Unauthenticated here, so anything except "not found" proves the route
+		// was recognised.
+		if resp.StatusCode == http.StatusNotFound {
+			t.Fatalf("route %s is not recognised", path)
+		}
+	}
+}

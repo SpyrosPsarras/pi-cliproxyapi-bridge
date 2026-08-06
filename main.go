@@ -60,12 +60,16 @@ import (
 
 const (
 	pluginName    = "pi-bridge"
-	pluginVersion = "0.6.6"
+	pluginVersion = "0.7.0"
 
 	routePanel        = "/panel"
-	routeCapabilities = "/dev/capabilities"
-	routeUsage        = "/dev/usage"
-	routeWellKnown    = "/dev/well-known"
+	routeCapabilities = "/capabilities"
+	routeUsage        = "/usage"
+	routeWellKnown    = "/well-known"
+
+	// legacyRoutePrefix keeps the paths used while the plugin was being tested
+	// working, so a client can be updated after the server rather than with it.
+	legacyRoutePrefix = "/dev"
 
 	// contractHeader selects the response contract. Absent means v1, which is
 	// byte-compatible with the sidecar so an unmigrated client keeps working.
@@ -213,6 +217,10 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 					Path:        routeWellKnown,
 					Description: "Model catalogue served to the Pi extension.",
 				},
+				// Superseded paths, still served for clients not yet updated.
+				{Path: legacyRoutePrefix + routeCapabilities},
+				{Path: legacyRoutePrefix + routeUsage},
+				{Path: legacyRoutePrefix + routeWellKnown},
 			},
 		})
 
