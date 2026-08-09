@@ -67,9 +67,9 @@ type modelOverride struct {
 
 func defaultAdvanced() advancedConfig {
 	return advancedConfig{
-		ManagementURL:          "http://127.0.0.1:8317/v0/management",
-		ManagementKeyEnv:       "MANAGEMENT_PASSWORD",
-		CPAMURL:                "http://cpa-manager-plus:18317",
+		ManagementURL:    "http://127.0.0.1:8317/v0/management",
+		ManagementKeyEnv: "MANAGEMENT_PASSWORD",
+		CPAMURL:          "http://cpa-manager-plus:18317",
 		// The plugin is the only caller that reaches the providers, so this TTL
 		// is what keeps their per-account rate limits happy. Clients cache far
 		// more briefly and simply re-read this document.

@@ -46,6 +46,120 @@ func TestClaudeOptionalWindowAbsent(t *testing.T) {
 	}
 }
 
+// The shape Anthropic actually returns today: the flat model-scoped fields are
+// null and the real windows, including model-scoped ones like Fable, live in
+// the structured array.
+const anthropicLimitsSample = `{
+  "five_hour": {"utilization": 27.0, "resets_at": "2026-08-09T10:30:00Z"},
+  "seven_day": {"utilization": 18.0, "resets_at": "2026-08-13T18:00:00Z"},
+  "seven_day_opus": null,
+  "seven_day_sonnet": null,
+  "limits": [
+    {"kind": "session", "percent": 27, "resets_at": "2026-08-09T10:30:00Z", "scope": null},
+    {"kind": "weekly_all", "percent": 18, "resets_at": "2026-08-13T18:00:00Z", "scope": null},
+    {"kind": "weekly_scoped", "percent": 9, "resets_at": "2026-08-13T17:59:59Z",
+     "scope": {"model": {"id": null, "display_name": "Fable"}}}
+  ]
+}`
+
+func TestClaudeReadsModelScopedLimits(t *testing.T) {
+	var payload claudeUsagePayload
+	if err := json.Unmarshal([]byte(anthropicLimitsSample), &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	groups := groupsFromLimits(payload.Limits)
+	if len(groups) != 3 {
+		t.Fatalf("groups = %d, want 3: %+v", len(groups), groups)
+	}
+
+	byID := map[string]quotaGroup{}
+	for _, g := range groups {
+		byID[g.ID] = g
+	}
+	fable, ok := byID["seven-day-fable"]
+	if !ok {
+		t.Fatalf("missing Fable group, got %v", byID)
+	}
+	if math.Abs(fable.RemainingFraction-0.91) > 1e-9 {
+		t.Fatalf("fable remaining = %v, want 0.91", fable.RemainingFraction)
+	}
+	if fable.Label != "7d Fable" {
+		t.Fatalf("fable label = %q", fable.Label)
+	}
+	// Pi renders the models entry, so it must mirror the group.
+	if len(fable.Models) != 1 || fable.Models[0].RemainingFraction != fable.RemainingFraction {
+		t.Fatalf("fable models entry not mirrored: %+v", fable.Models)
+	}
+	if math.Abs(byID["five-hour"].RemainingFraction-0.73) > 1e-9 {
+		t.Fatalf("session remaining = %v, want 0.73", byID["five-hour"].RemainingFraction)
+	}
+}
+
+// The array wins even though the flat fields still parse, otherwise a
+// model-scoped window would silently vanish.
+func TestClaudeLimitsPreferredOverFlatWindows(t *testing.T) {
+	var payload claudeUsagePayload
+	if err := json.Unmarshal([]byte(anthropicLimitsSample), &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got := len(groupsFromFlatWindows(payload)); got != 2 {
+		t.Fatalf("flat fallback = %d groups, want 2 (scoped ones are null)", got)
+	}
+	if got := len(groupsFromLimits(payload.Limits)); got != 3 {
+		t.Fatalf("structured = %d groups, want 3", got)
+	}
+}
+
+// A window the account does not have carries a null percent; reporting it as
+// full quota would be worse than omitting it.
+func TestClaudeLimitsSkipNullPercent(t *testing.T) {
+	var payload claudeUsagePayload
+	if err := json.Unmarshal([]byte(`{"limits":[
+		{"kind":"session","percent":10,"resets_at":"x"},
+		{"kind":"weekly_scoped","percent":null,"scope":{"model":{"display_name":"Opus"}}}
+	]}`), &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	groups := groupsFromLimits(payload.Limits)
+	if len(groups) != 1 || groups[0].ID != "five-hour" {
+		t.Fatalf("want only the session group, got %+v", groups)
+	}
+}
+
+// Older payloads that predate the array must keep working.
+func TestClaudeFallsBackToFlatWindows(t *testing.T) {
+	var payload claudeUsagePayload
+	if err := json.Unmarshal([]byte(anthropicSample), &payload); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if len(payload.Limits) != 0 {
+		t.Fatal("sample should not carry a limits array")
+	}
+	groups := groupsFromFlatWindows(payload)
+	if len(groups) != 3 {
+		t.Fatalf("groups = %d, want 3", len(groups))
+	}
+	if groups[2].ID != "seven-day-opus" {
+		t.Fatalf("third group = %q, want seven-day-opus", groups[2].ID)
+	}
+}
+
+func TestScopedGroupIDSlug(t *testing.T) {
+	cases := map[string]string{
+		"Fable":      "seven-day-fable",
+		"Opus":       "seven-day-opus",
+		"Claude 5.5": "seven-day-claude-55",
+		"  Sonnet  ": "seven-day-sonnet",
+		"":           "seven-day-scoped",
+		"!!!":        "seven-day-scoped",
+	}
+	for in, want := range cases {
+		if got := scopedGroupID(in); got != want {
+			t.Errorf("scopedGroupID(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
 func TestClampFraction(t *testing.T) {
 	cases := map[float64]float64{
 		-0.5:       0,

@@ -114,19 +114,34 @@ already renders, so the client contract does not change:
 {
   "schemaVersion": 1,
   "client": { "id": "abix", "keyHint": "sk-6cae…57a3" },
-  "cache": { "updatedAt": "...", "stale": false, "ttlMs": 60000 },
+  "cache": { "updatedAt": "...", "stale": false, "ttlMs": 120000 },
   "accounts": [
     {
       "provider": "claude",
       "account": "d***@gmail.com",
       "supported": true,
       "groups": [
-        { "id": "five-hour", "label": "5h Session", "remainingFraction": 0.83 }
+        { "id": "five-hour", "label": "5h Session", "remainingFraction": 0.83 },
+        { "id": "seven-day", "label": "7d Weekly", "remainingFraction": 0.82 },
+        { "id": "seven-day-fable", "label": "7d Fable", "remainingFraction": 0.91 }
       ]
     }
   ]
 }
 ```
+
+### Anthropic quota windows
+
+Anthropic reports quota in a structured `limits` array where each entry is
+self-describing, and the older flat `seven_day_*` fields are now `null`. The
+plugin reads the array, so per-model weekly windows appear automatically: Opus
+and Sonnet have been joined by **Fable**, which is a sub-cap on the weekly pool
+rather than a separate allowance — up to half the weekly limit may go to Fable.
+
+A model-scoped window becomes a group id derived from its name
+(`Fable` → `seven-day-fable`), so a model added later needs no code change. The
+flat fields are still read when the array is absent. A window the account does
+not have carries a null percent and is omitted rather than reported as full.
 
 ## Configuration
 
