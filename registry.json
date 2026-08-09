@@ -6,7 +6,7 @@
 			"name": "Pi Bridge",
 			"description": "Serves provider quota and the model catalogue to the Pi extension using one ordinary CLIProxyAPI API key.",
 			"author": "abix5",
-			"version": "0.8.0",
+			"version": "0.9.0",
 			"repository": "https://github.com/abix5/pi-cliproxyapi-bridge",
 			"homepage": "https://github.com/abix5/pi-cliproxyapi-bridge",
 			"license": "MIT",
