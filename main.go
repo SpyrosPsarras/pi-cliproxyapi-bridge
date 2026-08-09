@@ -60,7 +60,7 @@ import (
 
 const (
 	pluginName    = "pi-bridge"
-	pluginVersion = "0.9.0"
+	pluginVersion = "0.9.1"
 
 	routePanel        = "/panel"
 	routeCapabilities = "/capabilities"
@@ -297,7 +297,12 @@ func pluginRegistration() registration {
 	fields = append(fields, keyCheckboxFields(cfg)...)
 	fields = append(fields,
 		pluginapi.ConfigField{Name: "show_extra_analytics", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Use CPA Manager Plus for curated model prices and extra analytics. Its admin key is read from /CLIProxyAPI/cpam-admin-key or $CPAM_ADMIN_KEY, never from this config."},
-		pluginapi.ConfigField{Name: "advanced", Type: pluginapi.ConfigFieldTypeString, Description: `Optional JSON overriding defaults that rarely change, for example {"usage_ttl_seconds":60} or {"model_aliases":{"my-model":"gpt-5.6-sol"}}. Leave empty otherwise.`},
+		// The management API runs every field description through
+		// html.EscapeString before the panel renders it as text, so a literal
+		// quote arrives as &#34; and JSON examples become unreadable. Keep this
+		// text free of quotes, angle brackets and ampersands; the README carries
+		// the full examples.
+		pluginapi.ConfigField{Name: "advanced", Type: pluginapi.ConfigFieldTypeString, Description: "Optional JSON overriding defaults that rarely change: cache TTLs, model aliases and overrides, and quota window rules. Leave empty otherwise. See the plugin README for the keys and examples."},
 	)
 
 	return registration{

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"html"
 	"testing"
 
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/pluginabi"
@@ -69,6 +70,19 @@ func TestRegisteredRoutePaths(t *testing.T) {
 	for _, want := range []string{routePanel, routeCapabilities, routeUsage} {
 		if !found[want] {
 			t.Fatalf("expected route %s to be registered", want)
+		}
+	}
+}
+
+// The management API escapes every field description with html.EscapeString
+// before the panel prints it as text, so a quote reaches the user as &#34; and
+// a JSON example turns into noise. Keep descriptions free of characters that
+// escaping mangles.
+func TestConfigFieldDescriptionsSurviveHTMLEscaping(t *testing.T) {
+	for _, field := range pluginRegistration().Metadata.ConfigFields {
+		if field.Description != html.EscapeString(field.Description) {
+			t.Errorf("field %q description is mangled by escaping: %q",
+				field.Name, html.EscapeString(field.Description))
 		}
 	}
 }
