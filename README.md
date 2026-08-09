@@ -143,6 +143,42 @@ A model-scoped window becomes a group id derived from its name
 flat fields are still read when the array is absent. A window the account does
 not have carries a null percent and is omitted rather than reported as full.
 
+### When a provider changes shape
+
+Providers move these fields without warning — that `limits` migration silently
+dropped every per-model window until the plugin was rebuilt. Rather than
+hard-coding the layout, the plugin describes it, and `quota_windows` in the
+advanced JSON replaces that description for one provider without a new release:
+
+```json
+{"quota_windows": {"claude": [
+  {"array": "limits", "id": "five-hour", "label": "5h Session",
+   "percent": "percent", "reset": "resets_at",
+   "where": {"kind": ["session"]}},
+  {"array": "limits", "id": "seven-day-{name}", "label": "7d {name}",
+   "percent": "percent", "reset": "resets_at",
+   "name_from": "scope.model.display_name", "name_fallback": "Scoped",
+   "where": {"kind": ["weekly_scoped"]}}
+]}}
+```
+
+| Key | Meaning |
+| --- | --- |
+| `field` | one window at a fixed path, e.g. `rate_limit.primary_window` |
+| `array` | a list of self-describing entries, each yielding a window |
+| `id` / `label` | names the window; `{name}` is filled from `name_from` |
+| `percent` | path to the number, relative to the window |
+| `percent_means` | `used` (default) or `remaining` |
+| `reset` | path to the reset time; RFC 3339 or Unix seconds |
+| `name_from` / `name_fallback` | where `{name}` comes from |
+| `where` | restricts an `array` rule to matching entries |
+
+Paths are dot-separated and may index arrays (`a.b.0.c`). Rules that match
+nothing contribute nothing, so listing both the current and previous shape is
+safe — whichever the provider answers with produces the windows, and the first
+rule to claim an id wins. Setting `quota_windows` for a provider replaces its
+built-in rules entirely.
+
 ## Configuration
 
 The plugin works with no configuration: enable it and every CLIProxyAPI API key

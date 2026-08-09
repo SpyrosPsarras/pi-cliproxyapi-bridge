@@ -187,109 +187,6 @@ func fetchQuota(ctx context.Context, cfg pluginConfig, provider string, file aut
 	}
 }
 
-// claudeWindow is one Anthropic quota window. Utilization is a percentage
-// (0-100), not a 0-1 fraction.
-type claudeWindow struct {
-	Utilization float64 `json:"utilization"`
-	ResetsAt    string  `json:"resets_at"`
-}
-
-// claudeLimit is one entry of the structured `limits` array, which is where
-// Anthropic now reports quota. Entries are self-describing, so a model-scoped
-// window added later (Opus and Sonnet were joined by Fable) is picked up
-// without a code change. Percent is a percentage, like Utilization above.
-type claudeLimit struct {
-	Kind     string   `json:"kind"`
-	Percent  *float64 `json:"percent"`
-	ResetsAt string   `json:"resets_at"`
-	Scope    *struct {
-		Model *struct {
-			ID          string `json:"id"`
-			DisplayName string `json:"display_name"`
-		} `json:"model"`
-	} `json:"scope"`
-}
-
-type claudeUsagePayload struct {
-	// Limits is the current shape and takes precedence when present.
-	Limits []claudeLimit `json:"limits"`
-
-	// The flat windows below are the older shape. Anthropic still sends the
-	// keys but now nulls the model-scoped ones, so they serve only as a
-	// fallback for accounts still answering the old way.
-	FiveHour       *claudeWindow `json:"five_hour"`
-	SevenDay       *claudeWindow `json:"seven_day"`
-	SevenDayOpus   *claudeWindow `json:"seven_day_opus"`
-	SevenDaySonnet *claudeWindow `json:"seven_day_sonnet"`
-}
-
-// scopedGroupID turns a model display name into a stable group id, e.g.
-// "Fable" -> "seven-day-fable". Opus keeps the id it has always had.
-func scopedGroupID(model string) string {
-	slug := strings.Map(func(r rune) rune {
-		switch {
-		case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
-			return r
-		case r == ' ', r == '_', r == '-':
-			return '-'
-		default:
-			return -1
-		}
-	}, strings.ToLower(strings.TrimSpace(model)))
-	slug = strings.Trim(slug, "-")
-	if slug == "" {
-		slug = "scoped"
-	}
-	return "seven-day-" + slug
-}
-
-// groupsFromLimits reads the structured array. An entry with a null percent is
-// a window the account does not have, and is skipped rather than reported as
-// full quota.
-func groupsFromLimits(limits []claudeLimit) []quotaGroup {
-	var groups []quotaGroup
-	for _, l := range limits {
-		if l.Percent == nil {
-			continue
-		}
-		remaining := remainingFromPercent(*l.Percent)
-		switch l.Kind {
-		case "session":
-			groups = append(groups, simpleGroup("five-hour", "5h Session", remaining, l.ResetsAt))
-		case "weekly_all":
-			groups = append(groups, simpleGroup("seven-day", "7d Weekly", remaining, l.ResetsAt))
-		case "weekly_scoped":
-			name := ""
-			if l.Scope != nil && l.Scope.Model != nil {
-				if name = l.Scope.Model.DisplayName; name == "" {
-					name = l.Scope.Model.ID
-				}
-			}
-			if name == "" {
-				name = "Scoped"
-			}
-			groups = append(groups, simpleGroup(scopedGroupID(name), "7d "+name, remaining, l.ResetsAt))
-		}
-	}
-	return groups
-}
-
-// groupsFromFlatWindows reads the older top-level fields.
-func groupsFromFlatWindows(payload claudeUsagePayload) []quotaGroup {
-	var groups []quotaGroup
-	add := func(w *claudeWindow, id, label string) {
-		if w == nil {
-			return
-		}
-		groups = append(groups, simpleGroup(id, label, remainingFromPercent(w.Utilization), w.ResetsAt))
-	}
-	add(payload.FiveHour, "five-hour", "5h Session")
-	add(payload.SevenDay, "seven-day", "7d Weekly")
-	add(payload.SevenDayOpus, "seven-day-opus", "7d Opus")
-	add(payload.SevenDaySonnet, "seven-day-sonnet", "7d Sonnet")
-	return groups
-}
-
 // simpleGroup builds a group for providers that report a single number per
 // window. The sidecar always emits a models entry mirroring the group, and Pi
 // renders it, so the shape is preserved here.
@@ -314,6 +211,15 @@ func providerFailure(status int) error {
 	return fmt.Errorf("provider API failed: %d", status)
 }
 
+// rulesFor returns the window rules for a provider: the configured ones when
+// present, otherwise the built-in defaults.
+func (cfg pluginConfig) rulesFor(provider string) []quotaRule {
+	if rules, ok := cfg.advanced.QuotaWindows[provider]; ok && len(rules) > 0 {
+		return rules
+	}
+	return defaultQuotaRules()[provider]
+}
+
 func fetchClaudeQuota(ctx context.Context, cfg pluginConfig, authIndex string) ([]quotaGroup, error) {
 	resp, err := cfg.managementAPICall(ctx, apiCallRequest{
 		AuthIndex: authIndex,
@@ -331,17 +237,15 @@ func fetchClaudeQuota(ctx context.Context, cfg pluginConfig, authIndex string) (
 		return nil, providerFailure(resp.StatusCode)
 	}
 
-	var payload claudeUsagePayload
+	var payload map[string]any
 	if err := json.Unmarshal([]byte(resp.Body), &payload); err != nil {
 		return nil, err
 	}
-	// The structured array describes every window the account actually has,
-	// including model-scoped ones like Fable that the flat fields now report
-	// as null. Fall back to the flat fields only when it is absent.
-	if groups := groupsFromLimits(payload.Limits); len(groups) > 0 {
-		return groups, nil
+	groups := applyQuotaRules(payload, cfg.rulesFor("claude"))
+	if len(groups) == 0 {
+		return nil, fmt.Errorf("no Anthropic quota windows found")
 	}
-	return groupsFromFlatWindows(payload), nil
+	return groups, nil
 }
 
 // codexWindow is one Codex rate-limit window. Absent windows carry a null
@@ -380,6 +284,20 @@ func fetchCodexQuota(ctx context.Context, cfg pluginConfig, authIndex string) ([
 	if err := json.Unmarshal([]byte(resp.Body), &payload); err != nil {
 		return nil, err
 	}
+
+	// Configured rules take over when a deployment has to describe a payload
+	// this build does not know about.
+	if rules, ok := cfg.advanced.QuotaWindows["codex"]; ok && len(rules) > 0 {
+		var generic map[string]any
+		if err := json.Unmarshal([]byte(resp.Body), &generic); err != nil {
+			return nil, err
+		}
+		if groups := applyQuotaRules(generic, rules); len(groups) > 0 {
+			return groups, nil
+		}
+		return nil, fmt.Errorf("no Codex quota windows found")
+	}
+
 	if payload.RateLimit == nil {
 		return nil, fmt.Errorf("no Codex quota windows found")
 	}

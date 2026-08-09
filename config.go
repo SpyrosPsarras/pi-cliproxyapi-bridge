@@ -44,6 +44,14 @@ type advancedConfig struct {
 	CapabilitiesTTLSeconds int    `json:"capabilities_ttl_seconds"`
 	PublicBaseURL          string `json:"public_base_url"`
 
+	// QuotaWindows replaces the built-in description of where a provider's
+	// quota numbers live, keyed by provider ("claude", "codex"). Providers
+	// change the shape of these payloads without warning; the built-in rules
+	// list both the current and the previous shape, and setting this lets a
+	// deployment answer the next change by editing configuration instead of
+	// waiting for a release.
+	QuotaWindows map[string][]quotaRule `json:"quota_windows"`
+
 	// ModelAliases rebinds a proxy model id onto a different models.dev id.
 	// Proxy model names rarely match the catalogue exactly, and a near-miss
 	// silently yields the wrong context window, so the mapping is explicit.
