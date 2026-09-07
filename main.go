@@ -60,7 +60,7 @@ import (
 
 const (
 	pluginName    = "pi-bridge"
-	pluginVersion = "0.9.1"
+	pluginVersion = "0.10.0"
 
 	routePanel        = "/panel"
 	routeCapabilities = "/capabilities"
@@ -107,6 +107,7 @@ type registration struct {
 }
 
 type registrationCapabilities struct {
+	UsagePlugin  bool `json:"usage_plugin"`
 	ManagementAPI bool `json:"management_api"`
 }
 
@@ -186,6 +187,14 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 	case pluginabi.MethodPluginRegister, pluginabi.MethodPluginReconfigure:
 		applyLifecycleConfig(request)
 		return okEnvelope(pluginRegistration())
+
+	case pluginabi.MethodUsageHandle:
+		var record usageRecord
+		if len(request) > 0 {
+			_ = json.Unmarshal(request, &record)
+		}
+		recordTokenUsage(record)
+		return okEnvelope(struct{}{})
 
 	case pluginabi.MethodManagementRegister:
 		// Routes are registered as resources: resource requests are not
@@ -490,6 +499,7 @@ func shapeForContract(encoded []byte, contract int, client authenticatedClient, 
 		return encoded
 	}
 	doc.Client = &clientIdentity{KeyHint: client.KeyHint}
+	doc.Models = tokenModelSnapshot()
 	doc.Cache = &cacheInfo{
 		UpdatedAt: storedAt.UTC().Format(time.RFC3339),
 		Stale:     false,

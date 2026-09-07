@@ -31,7 +31,7 @@ docker run --rm \
   --platform linux/amd64 \
   -v "$PWD":/src \
   -w /src \
-  -e GOFLAGS=-mod=mod \
+  -e GOFLAGS="${GOFLAGS:--mod=mod}" \
   -e CGO_ENABLED=1 \
   "$GO_IMAGE" \
   go build -buildmode=c-shared -trimpath -o "$OUT_DIR/$ARTIFACT" .
