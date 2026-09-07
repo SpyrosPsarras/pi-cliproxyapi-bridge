@@ -85,6 +85,19 @@ func TestShapeForContractAttachesModelsOnlyForV2(t *testing.T) {
 	}
 }
 
+// The host only dispatches usage.handle to plugins that declare the
+// capability at registration. A missing flag here is silent: the plugin loads,
+// serves quota, and never sees a token counter.
+func TestRegistrationDeclaresUsagePluginCapability(t *testing.T) {
+	reg := pluginRegistration()
+	if !reg.Capabilities.UsagePlugin {
+		t.Fatal("registration does not declare usage_plugin; the host will never deliver usage.handle")
+	}
+	if !reg.Capabilities.ManagementAPI {
+		t.Fatal("registration lost the management_api capability")
+	}
+}
+
 func TestShapeForContractContractHeadersStillResolve(t *testing.T) {
 	if got := contractFrom(http.Header{contractHeader: []string{"2"}}); got != 2 {
 		t.Fatalf("contract = %d, want 2", got)

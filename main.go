@@ -60,7 +60,7 @@ import (
 
 const (
 	pluginName    = "pi-bridge"
-	pluginVersion = "0.10.0"
+	pluginVersion = "0.10.1"
 
 	routePanel        = "/panel"
 	routeCapabilities = "/capabilities"
@@ -323,7 +323,7 @@ func pluginRegistration() registration {
 			GitHubRepository: "https://github.com/abix5/pi-cliproxyapi",
 			ConfigFields:     fields,
 		},
-		Capabilities: registrationCapabilities{ManagementAPI: true},
+		Capabilities: registrationCapabilities{UsagePlugin: true, ManagementAPI: true},
 	}
 }
 
