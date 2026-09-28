@@ -104,6 +104,12 @@ unmigrated client sees no change.
 **v2** adds a `cache` section (`updatedAt`, `stale`, `ttlMs`) and a `client`
 section (`keyHint`).
 
+`usage` on v2 also carries `models`: per-provider, per-model token totals
+(`input`, `output`, `reasoning`, `cached`, `total`) collected from the proxy's
+`usage.handle` records. The totals count up from plugin load, so a client diffs
+two snapshots to get usage over a period, the same way it diffs request counters.
+The field is left out until the first record arrives.
+
 Every response echoes `X-Pi-Contract` and `X-Pi-Contract-Latest`, so a client
 can detect that a newer contract exists and warn without parsing the body.
 

@@ -24,6 +24,9 @@ type usageDocument struct {
 	Cache         *cacheInfo      `json:"cache,omitempty"`
 	Accounts      []usageAccount  `json:"accounts"`
 	Unsupported   []string        `json:"unsupportedProviders"`
+	// Models carries cumulative per-model token counters. Attached at serve
+	// time for contract v2 only, so the v1 shape stays byte-compatible.
+	Models []modelTokenUsage `json:"models,omitempty"`
 }
 
 type clientIdentity struct {
