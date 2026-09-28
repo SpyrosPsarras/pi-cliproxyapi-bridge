@@ -12,13 +12,11 @@ type usageRecord struct {
 	Provider string `json:"Provider"`
 	Model    string `json:"Model"`
 	Detail   struct {
-		InputTokens         int64 `json:"InputTokens"`
-		OutputTokens        int64 `json:"OutputTokens"`
-		ReasoningTokens     int64 `json:"ReasoningTokens"`
-		CachedTokens        int64 `json:"CachedTokens"`
-		CacheReadTokens     int64 `json:"CacheReadTokens"`
-		CacheCreationTokens int64 `json:"CacheCreationTokens"`
-		TotalTokens         int64 `json:"TotalTokens"`
+		InputTokens     int64 `json:"InputTokens"`
+		OutputTokens    int64 `json:"OutputTokens"`
+		ReasoningTokens int64 `json:"ReasoningTokens"`
+		CachedTokens    int64 `json:"CachedTokens"`
+		TotalTokens     int64 `json:"TotalTokens"`
 	} `json:"Detail"`
 }
 
@@ -64,7 +62,12 @@ func recordTokenUsage(rec usageRecord) {
 	entry.Input += d.InputTokens
 	entry.Output += d.OutputTokens
 	entry.Reasoning += d.ReasoningTokens
-	entry.Cached += d.CachedTokens + d.CacheReadTokens + d.CacheCreationTokens
+	// The host copies the cache-read count into both CachedTokens and
+	// CacheReadTokens, and falls back to CacheCreationTokens when there is no
+	// read, so CachedTokens alone is the total. Adding the others double-counts.
+	entry.Cached += d.CachedTokens
+	// Reasoning tokens are part of the output count, so input plus output is the
+	// whole request when the host sends no total.
 	if d.TotalTokens > 0 {
 		entry.Total += d.TotalTokens
 	} else {

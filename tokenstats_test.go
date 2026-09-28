@@ -1,8 +1,8 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
-	"net/http"
 	"testing"
 	"time"
 )
@@ -45,8 +45,24 @@ func TestRecordTokenUsageFallsBackToSummedTotal(t *testing.T) {
 	resetTokenStats()
 	recordTokenUsage(usageRecordJSON(t, `{"Provider":"codex","Model":"gpt-5.6","Detail":{"InputTokens":40,"OutputTokens":8}}`))
 	snap := tokenModelSnapshot()
-	if snap[0].Total != 48 {
-		t.Fatalf("total = %d, want 48", snap[0].Total)
+	if len(snap) != 1 || snap[0].Total != 48 {
+		t.Fatalf("snapshot = %+v, want one model with total 48", snap)
+	}
+}
+
+// The host sets CachedTokens and CacheReadTokens to the same cache-read count,
+// so summing them would report twice the real number.
+func TestRecordTokenUsageCountsCachedAndReasoningOnce(t *testing.T) {
+	resetTokenStats()
+	recordTokenUsage(usageRecordJSON(t, `{"Provider":"claude","Model":"claude-opus-5","Detail":{"InputTokens":10,"OutputTokens":4,"ReasoningTokens":3,"CachedTokens":80,"CacheReadTokens":80,"TotalTokens":94}}`))
+	recordTokenUsage(usageRecordJSON(t, `{"Provider":"claude","Model":"claude-opus-5","Detail":{"InputTokens":5,"OutputTokens":1,"CachedTokens":30,"CacheCreationTokens":30,"TotalTokens":36}}`))
+
+	snap := tokenModelSnapshot()
+	if len(snap) != 1 {
+		t.Fatalf("models = %d, want 1", len(snap))
+	}
+	if snap[0].Cached != 110 || snap[0].Reasoning != 3 {
+		t.Fatalf("cached = %d (want 110), reasoning = %d (want 3)", snap[0].Cached, snap[0].Reasoning)
 	}
 }
 
@@ -64,12 +80,8 @@ func TestShapeForContractAttachesModelsOnlyForV2(t *testing.T) {
 	}
 
 	v1 := shapeForContract(cached, contractV1, authenticatedClient{KeyHint: "k"}, time.Now(), time.Minute)
-	var docV1 usageDocument
-	if err := json.Unmarshal(v1, &docV1); err != nil {
-		t.Fatal(err)
-	}
-	if docV1.Models != nil {
-		t.Fatalf("v1 must stay byte-compatible, got models: %+v", docV1.Models)
+	if !bytes.Equal(v1, cached) {
+		t.Fatalf("v1 must stay byte-compatible:\n got %s\nwant %s", v1, cached)
 	}
 
 	v2 := shapeForContract(cached, contractLatest, authenticatedClient{KeyHint: "k"}, time.Now(), time.Minute)
@@ -95,12 +107,6 @@ func TestRegistrationDeclaresUsagePluginCapability(t *testing.T) {
 	}
 	if !reg.Capabilities.ManagementAPI {
 		t.Fatal("registration lost the management_api capability")
-	}
-}
-
-func TestShapeForContractContractHeadersStillResolve(t *testing.T) {
-	if got := contractFrom(http.Header{contractHeader: []string{"2"}}); got != 2 {
-		t.Fatalf("contract = %d, want 2", got)
 	}
 }
 

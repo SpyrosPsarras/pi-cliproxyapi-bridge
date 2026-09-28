@@ -60,7 +60,7 @@ import (
 
 const (
 	pluginName    = "pi-bridge"
-	pluginVersion = "0.10.1"
+	pluginVersion = "0.10.2"
 
 	routePanel        = "/panel"
 	routeCapabilities = "/capabilities"
@@ -107,7 +107,7 @@ type registration struct {
 }
 
 type registrationCapabilities struct {
-	UsagePlugin  bool `json:"usage_plugin"`
+	UsagePlugin   bool `json:"usage_plugin"`
 	ManagementAPI bool `json:"management_api"`
 }
 
