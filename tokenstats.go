@@ -3,15 +3,18 @@ package main
 import (
 	"sort"
 	"sync"
+	"time"
 )
 
 // usageRecord is the subset of the host's usage.handle payload the bridge
-// needs: which provider and model served the request and the token counters
-// reported for it.
+// needs: which provider, model and credential served the request, when, and
+// the token counters reported for it.
 type usageRecord struct {
-	Provider string `json:"Provider"`
-	Model    string `json:"Model"`
-	Detail   struct {
+	Provider    string    `json:"Provider"`
+	Model       string    `json:"Model"`
+	AuthIndex   string    `json:"AuthIndex"`
+	RequestedAt time.Time `json:"RequestedAt"`
+	Detail      struct {
 		InputTokens     int64 `json:"InputTokens"`
 		OutputTokens    int64 `json:"OutputTokens"`
 		ReasoningTokens int64 `json:"ReasoningTokens"`

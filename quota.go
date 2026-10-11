@@ -40,19 +40,24 @@ type cacheInfo struct {
 }
 
 type usageAccount struct {
-	Provider      string       `json:"provider"`
-	Account       string       `json:"account"`
-	AuthIndex     string       `json:"authIndex"`
-	Label         string       `json:"label"`
-	Status        string       `json:"status"`
-	Disabled      bool         `json:"disabled"`
-	Unavailable   bool         `json:"unavailable"`
-	Success       int          `json:"success"`
-	Failed        int          `json:"failed"`
-	LastRequestAt string       `json:"lastRequestAt,omitempty"`
-	Supported     bool         `json:"supported"`
-	Error         string       `json:"error,omitempty"`
-	Groups        []quotaGroup `json:"groups"`
+	Provider      string `json:"provider"`
+	Account       string `json:"account"`
+	AuthIndex     string `json:"authIndex"`
+	Label         string `json:"label"`
+	Status        string `json:"status"`
+	Disabled      bool   `json:"disabled"`
+	Unavailable   bool   `json:"unavailable"`
+	Success       int    `json:"success"`
+	Failed        int    `json:"failed"`
+	LastRequestAt string `json:"lastRequestAt,omitempty"`
+	// LastModel is the model of the newest request this credential served.
+	// Read when the document is built, so it is cached together with
+	// LastRequestAt. Served on contract v2 only, and left out until the
+	// first request since plugin load.
+	LastModel string       `json:"lastModel,omitempty"`
+	Supported bool         `json:"supported"`
+	Error     string       `json:"error,omitempty"`
+	Groups    []quotaGroup `json:"groups"`
 }
 
 type quotaGroup struct {
@@ -143,6 +148,7 @@ func buildUsage(ctx context.Context, cfg pluginConfig) (usageDocument, error) {
 			Success:       file.Success,
 			Failed:        file.Failed,
 			LastRequestAt: file.UpdatedAt,
+			LastModel:     lastModelFor(file.AuthIndex),
 			Supported:     providerSupported(provider),
 			Groups:        []quotaGroup{},
 		}
