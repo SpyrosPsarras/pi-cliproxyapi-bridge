@@ -110,6 +110,12 @@ section (`keyHint`).
 two snapshots to get usage over a period, the same way it diffs request counters.
 The field is left out until the first record arrives.
 
+Each account on v2 also carries `lastModel`: the model id of the newest request
+that credential served, the same id `models` uses (for example `gpt-5.5`). It is
+read when the document is built, so it is cached with that snapshot's
+`lastRequestAt`. Like `models`, it covers requests since plugin load and is left
+out until the credential serves one.
+
 Every response echoes `X-Pi-Contract` and `X-Pi-Contract-Latest`, so a client
 can detect that a newer contract exists and warn without parsing the body.
 

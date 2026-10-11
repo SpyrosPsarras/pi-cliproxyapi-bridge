@@ -60,7 +60,7 @@ import (
 
 const (
 	pluginName    = "pi-bridge"
-	pluginVersion = "0.10.2"
+	pluginVersion = "0.11.0"
 
 	routePanel        = "/panel"
 	routeCapabilities = "/capabilities"
@@ -194,6 +194,7 @@ func handleMethod(method string, request []byte) ([]byte, error) {
 			_ = json.Unmarshal(request, &record)
 		}
 		recordTokenUsage(record)
+		recordLastModel(record)
 		return okEnvelope(struct{}{})
 
 	case pluginabi.MethodManagementRegister:
@@ -487,11 +488,11 @@ func handleUsage(cfg pluginConfig, client authenticatedClient, query url.Values,
 }
 
 // shapeForContract renders the cached upstream document for one contract
-// version. v1 is the sidecar's shape exactly; v2 adds cache provenance and the
-// authenticated client hint.
+// version. v1 is the sidecar's shape exactly; v2 adds cache provenance, the
+// authenticated client hint and each account's last model.
 func shapeForContract(encoded []byte, contract int, client authenticatedClient, storedAt time.Time, ttl time.Duration) []byte {
 	if contract < contractLatest {
-		return encoded
+		return withoutLastModel(encoded)
 	}
 
 	var doc usageDocument
@@ -511,6 +512,27 @@ func shapeForContract(encoded []byte, contract int, client authenticatedClient, 
 		return encoded
 	}
 	return patched
+}
+
+// withoutLastModel strips the v2-only lastModel from the cached document. It is
+// cached with the accounts so it stays paired with their lastRequestAt, and the
+// sidecar's v1 shape has no such field.
+func withoutLastModel(encoded []byte) []byte {
+	if !strings.Contains(string(encoded), `"lastModel":`) {
+		return encoded
+	}
+	var doc usageDocument
+	if err := json.Unmarshal(encoded, &doc); err != nil {
+		return encoded
+	}
+	for i := range doc.Accounts {
+		doc.Accounts[i].LastModel = ""
+	}
+	stripped, err := json.Marshal(doc)
+	if err != nil {
+		return encoded
+	}
+	return stripped
 }
 
 // handleWellKnown serves the model catalogue. Like usage, the document is
