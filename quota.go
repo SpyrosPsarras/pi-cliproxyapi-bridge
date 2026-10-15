@@ -501,8 +501,8 @@ func fetchAntigravityProjectQuota(ctx context.Context, cfg pluginConfig, authInd
 type antigravityModelEntry struct {
 	DisplayName string `json:"displayName"`
 	QuotaInfo   *struct {
-		RemainingFraction *float64 `json:"remainingFraction"`
-		ResetTime         string   `json:"resetTime"`
+		RemainingFraction float64 `json:"remainingFraction"`
+		ResetTime         string  `json:"resetTime"`
 	} `json:"quotaInfo"`
 }
 
@@ -572,13 +572,13 @@ func decodeAntigravityModels(raw json.RawMessage) ([]quotaModel, error) {
 		if err := decoder.Decode(&entry); err != nil {
 			return nil, err
 		}
-		if entry.QuotaInfo == nil || entry.QuotaInfo.RemainingFraction == nil {
+		if entry.QuotaInfo == nil {
 			continue
 		}
 		models = append(models, quotaModel{
 			ID:                id,
 			DisplayName:       firstNonEmpty(entry.DisplayName, id),
-			RemainingFraction: clampFraction(*entry.QuotaInfo.RemainingFraction),
+			RemainingFraction: clampFraction(entry.QuotaInfo.RemainingFraction),
 			ResetTime:         entry.QuotaInfo.ResetTime,
 		})
 	}

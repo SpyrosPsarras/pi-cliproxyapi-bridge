@@ -362,6 +362,59 @@ func TestDecodeAntigravityModelsPreservesOrder(t *testing.T) {
 	}
 }
 
+func TestDecodeAntigravityModelsMissingFractionIsExhausted(t *testing.T) {
+	raw := []byte(`{
+		"gemini-3-flash": {"quotaInfo":{"resetTime":"2026-10-21T18:27:28Z"}},
+		"claude-opus-4-6-thinking": {"quotaInfo":{"resetTime":"2026-10-21T18:27:37Z"}},
+		"claude-sonnet-4-6": {"quotaInfo":{"resetTime":"2026-10-21T18:27:37Z"}},
+		"tab_flash_lite_preview": {"quotaInfo":{"remainingFraction":1}},
+		"chat_20706": {"quotaInfo":{"remainingFraction":1}}
+	}`)
+
+	models, err := decodeAntigravityModels(raw)
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	groups := groupAntigravityModels(models)
+	for _, want := range []struct {
+		label     string
+		modelID   string
+		resetTime string
+	}{
+		{"Flash Models", "gemini-3-flash", "2026-10-21T18:27:28Z"},
+		{"Thinking Models", "claude-opus-4-6-thinking", "2026-10-21T18:27:37Z"},
+		{"Other Models", "claude-sonnet-4-6", "2026-10-21T18:27:37Z"},
+	} {
+		t.Run(want.label, func(t *testing.T) {
+			var group *quotaGroup
+			for i := range groups {
+				if groups[i].Label == want.label {
+					group = &groups[i]
+					break
+				}
+			}
+			if group == nil {
+				t.Fatalf("missing group %q", want.label)
+			}
+			if group.RemainingFraction != 0 {
+				t.Errorf("group fraction = %v, want 0", group.RemainingFraction)
+			}
+			if group.ResetTime != want.resetTime {
+				t.Errorf("group reset = %q, want %q", group.ResetTime, want.resetTime)
+			}
+			for _, model := range group.Models {
+				if model.ID == want.modelID {
+					if model.RemainingFraction != 0 || model.ResetTime != want.resetTime {
+						t.Errorf("exhausted model = %+v, want fraction 0 and reset %q", model, want.resetTime)
+					}
+					return
+				}
+			}
+			t.Errorf("missing exhausted model %q", want.modelID)
+		})
+	}
+}
+
 // The provider returns its catalogue in a different order on every call, so
 // group order must come from the plugin, not the payload.
 func TestAntigravityGroupOrderIsStable(t *testing.T) {
