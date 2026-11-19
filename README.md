@@ -116,6 +116,10 @@ read when the document is built, so it is cached with that snapshot's
 `lastRequestAt`. Like `models`, it covers requests since plugin load and is left
 out until the credential serves one.
 
+Each account on v2 also carries `tokens`: an object mapping model ids to
+cumulative token totals since plugin load, using the same counting rules as
+`models`. The field is left out until the account has token usage.
+
 Every response echoes `X-Pi-Contract` and `X-Pi-Contract-Latest`, so a client
 can detect that a newer contract exists and warn without parsing the body.
 
