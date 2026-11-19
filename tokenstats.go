@@ -1,6 +1,7 @@
 package main
 
 import (
+	"maps"
 	"sort"
 	"sync"
 	"time"
@@ -42,8 +43,9 @@ type modelTokenUsage struct {
 }
 
 var (
-	tokenStatsMu sync.Mutex
-	tokenStats   = map[tokenKey]*modelTokenUsage{}
+	tokenStatsMu      sync.Mutex
+	tokenStats        = map[tokenKey]*modelTokenUsage{}
+	accountTokenStats = map[string]map[string]int64{}
 )
 
 func recordTokenUsage(rec usageRecord) {
@@ -71,11 +73,23 @@ func recordTokenUsage(rec usageRecord) {
 	entry.Cached += d.CachedTokens
 	// Reasoning tokens are part of the output count, so input plus output is the
 	// whole request when the host sends no total.
-	if d.TotalTokens > 0 {
-		entry.Total += d.TotalTokens
-	} else {
-		entry.Total += d.InputTokens + d.OutputTokens
+	total := d.TotalTokens
+	if total <= 0 {
+		total = d.InputTokens + d.OutputTokens
 	}
+	entry.Total += total
+	if rec.AuthIndex != "" {
+		if accountTokenStats[rec.AuthIndex] == nil {
+			accountTokenStats[rec.AuthIndex] = map[string]int64{}
+		}
+		accountTokenStats[rec.AuthIndex][rec.Model] += total
+	}
+}
+
+func accountTokenSnapshot(authIndex string) map[string]int64 {
+	tokenStatsMu.Lock()
+	defer tokenStatsMu.Unlock()
+	return maps.Clone(accountTokenStats[authIndex])
 }
 
 // tokenModelSnapshot returns the counters sorted by provider then model so the
