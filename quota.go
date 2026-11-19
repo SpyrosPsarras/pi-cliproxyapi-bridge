@@ -54,10 +54,11 @@ type usageAccount struct {
 	// Read when the document is built, so it is cached together with
 	// LastRequestAt. Served on contract v2 only, and left out until the
 	// first request since plugin load.
-	LastModel string       `json:"lastModel,omitempty"`
-	Supported bool         `json:"supported"`
-	Error     string       `json:"error,omitempty"`
-	Groups    []quotaGroup `json:"groups"`
+	LastModel string           `json:"lastModel,omitempty"`
+	Supported bool             `json:"supported"`
+	Error     string           `json:"error,omitempty"`
+	Groups    []quotaGroup     `json:"groups"`
+	Tokens    map[string]int64 `json:"tokens,omitempty"`
 }
 
 type quotaGroup struct {

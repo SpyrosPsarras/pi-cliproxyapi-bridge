@@ -11,6 +11,7 @@ func resetTokenStats() {
 	tokenStatsMu.Lock()
 	defer tokenStatsMu.Unlock()
 	tokenStats = map[tokenKey]*modelTokenUsage{}
+	accountTokenStats = map[string]map[string]int64{}
 }
 
 func TestRecordTokenUsageAccumulatesPerModel(t *testing.T) {
@@ -94,6 +95,77 @@ func TestShapeForContractAttachesModelsOnlyForV2(t *testing.T) {
 	}
 	if docV2.Client == nil || docV2.Client.KeyHint != "k" {
 		t.Fatalf("v2 client hint lost: %+v", docV2.Client)
+	}
+}
+
+func TestRecordTokenUsageAccumulatesPerAccount(t *testing.T) {
+	resetTokenStats()
+	t.Cleanup(resetTokenStats)
+	recordTokenUsage(usageRecordJSON(t, `{"Provider":"claude","Model":"claude-opus-5","AuthIndex":"a1","Detail":{"TotalTokens":100}}`))
+	recordTokenUsage(usageRecordJSON(t, `{"Provider":"claude","Model":"claude-opus-5","AuthIndex":"a1","Detail":{"TotalTokens":50}}`))
+	recordTokenUsage(usageRecordJSON(t, `{"Provider":"claude","Model":"claude-opus-5","AuthIndex":"b2","Detail":{"TotalTokens":30}}`))
+
+	snap := accountTokenSnapshot("a1")
+	if got := snap["claude-opus-5"]; got != 150 {
+		t.Fatalf("a1 total = %d, want 150", got)
+	}
+	if got := accountTokenSnapshot("b2")["claude-opus-5"]; got != 30 {
+		t.Fatalf("b2 total = %d, want 30", got)
+	}
+	if got := accountTokenSnapshot("zz"); got != nil {
+		t.Fatalf("zz snapshot = %v, want nil", got)
+	}
+	snap["claude-opus-5"] = 0
+	if got := accountTokenSnapshot("a1")["claude-opus-5"]; got != 150 {
+		t.Fatalf("mutating the snapshot changed a1 total to %d", got)
+	}
+}
+
+func TestRecordTokenUsageAccountUsesSameTotalRule(t *testing.T) {
+	resetTokenStats()
+	t.Cleanup(resetTokenStats)
+	recordTokenUsage(usageRecordJSON(t, `{"Provider":"claude","Model":"claude-opus-5","AuthIndex":"a1","Detail":{"InputTokens":10,"OutputTokens":5}}`))
+	recordTokenUsage(usageRecordJSON(t, `{"Provider":"claude","Model":"claude-opus-5","Detail":{"TotalTokens":20}}`))
+	if got := accountTokenSnapshot("a1")["claude-opus-5"]; got != 15 {
+		t.Fatalf("a1 total = %d, want 15", got)
+	}
+	if got := accountTokenSnapshot(""); got != nil {
+		t.Fatalf("empty authIndex snapshot = %v, want nil", got)
+	}
+}
+
+func TestShapeForContractAttachesAccountTokensOnlyForV2(t *testing.T) {
+	resetTokenStats()
+	t.Cleanup(resetTokenStats)
+	recordTokenUsage(usageRecordJSON(t, `{"Provider":"claude","Model":"claude-opus-5","AuthIndex":"a1","Detail":{"TotalTokens":150}}`))
+	recordTokenUsage(usageRecordJSON(t, `{"Provider":"claude","Model":"claude-opus-5","AuthIndex":"b2","Detail":{"TotalTokens":30}}`))
+
+	cached := []byte(`{"schemaVersion":1,"accounts":[{"authIndex":"a1"},{"authIndex":"b2"},{"authIndex":"c3"}]}`)
+	storedAt := time.Now()
+	v1 := shapeForContract(cached, contractV1, authenticatedClient{}, storedAt, time.Minute)
+	if !bytes.Equal(v1, cached) {
+		t.Fatalf("v1 must stay byte-compatible:\n got %s\nwant %s", v1, cached)
+	}
+
+	v2 := shapeForContract(cached, contractLatest, authenticatedClient{}, storedAt, time.Minute)
+	var doc struct {
+		Accounts []map[string]json.RawMessage `json:"accounts"`
+	}
+	if err := json.Unmarshal(v2, &doc); err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.Accounts) != 3 {
+		t.Fatalf("v2 accounts = %d, want 3", len(doc.Accounts))
+	}
+	var tokens map[string]int64
+	if err := json.Unmarshal(doc.Accounts[0]["tokens"], &tokens); err != nil {
+		t.Fatalf("decode a1 tokens: %v", err)
+	}
+	if got := tokens["claude-opus-5"]; got != 150 {
+		t.Fatalf("a1 total = %d, want 150", got)
+	}
+	if _, ok := doc.Accounts[2]["tokens"]; ok {
+		t.Fatal("v2 must omit tokens for c3")
 	}
 }
 

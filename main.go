@@ -60,7 +60,7 @@ import (
 
 const (
 	pluginName    = "pi-bridge"
-	pluginVersion = "0.11.0"
+	pluginVersion = "0.12.0"
 
 	routePanel        = "/panel"
 	routeCapabilities = "/capabilities"
@@ -501,6 +501,10 @@ func shapeForContract(encoded []byte, contract int, client authenticatedClient, 
 	}
 	doc.Client = &clientIdentity{KeyHint: client.KeyHint}
 	doc.Models = tokenModelSnapshot()
+	for i := range doc.Accounts {
+		acc := &doc.Accounts[i]
+		acc.Tokens = accountTokenSnapshot(acc.AuthIndex)
+	}
 	doc.Cache = &cacheInfo{
 		UpdatedAt: storedAt.UTC().Format(time.RFC3339),
 		Stale:     false,
